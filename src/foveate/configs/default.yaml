@@ -1,0 +1,56 @@
+# Foveate experiment configuration.
+# A "visual config" is written MODEL:FRAMESxRES, e.g. 3b:8x448 means the 3B model,
+# 8 uniformly sampled frames, each resized to about 448*448 pixels (aspect kept).
+
+models:
+  3b:
+    id: Qwen/Qwen2.5-VL-3B-Instruct
+    quantization: null
+  7b:
+    # AWQ 4-bit build: fits one 16 GB T4 next to its KV cache, and is the
+    # "bigger model" rung of the cascade.
+    id: Qwen/Qwen2.5-VL-7B-Instruct-AWQ
+    quantization: awq
+
+# Configs evaluated on every question (stage 2). Cost grows with
+# ceil(frames/2) * (res/28)^2 visual tokens, see src/foveate/tokens.py.
+grid:
+  mvbench:
+    3b: [4x224, 8x224, 16x224, 4x448, 8x448, 16x448, 8x672]
+    7b: [8x448, 16x448]
+  lingoqa:
+    3b: [2x224, 4x224, 2x448, 4x448, 4x672]
+    7b: [4x448]
+  # 24 generated questions: a one-minute smoke test of the GPU stack.
+  synthetic:
+    3b: [2x224, 8x448]
+    7b: [8x448]
+
+# Escalation order for the cascade (stage 3). Each rung must be in the grid.
+ladder:
+  mvbench: ["3b:4x224", "3b:8x448", "3b:16x448", "7b:16x448"]
+  lingoqa: ["3b:2x224", "3b:4x448", "7b:4x448"]
+  synthetic: ["3b:2x224", "3b:8x448", "7b:8x448"]
+
+# Distribution shift (stage 4): corruptions applied to every frame.
+shift:
+  corruptions: [fog, night, blur]
+  severity: 3
+  # Configs re-run on the shifted copies: the ladder minus its middle rung, to
+  # keep the shift study to about a third of the grid's GPU time.
+  configs:
+    mvbench: ["3b:4x224", "3b:16x448", "7b:16x448"]
+    lingoqa: ["3b:2x224", "3b:4x448", "7b:4x448"]
+    synthetic: ["3b:2x224", "3b:8x448"]
+
+# Stage 1 profiler sweep (Transformers backend, batch 1).
+profile:
+  frames: [1, 2, 4, 8, 16]
+  res: [224, 448, 672, 896]
+  out_tokens: 32
+  decode_sweep_out_tokens: [1, 16, 64, 256]
+  repeats: 10
+  warmup: 3
+
+pilot_fraction: 0.30
+seed: 0
