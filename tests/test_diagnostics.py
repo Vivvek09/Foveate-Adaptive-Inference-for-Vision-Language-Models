@@ -57,3 +57,8 @@ def test_fallback_event_is_a_failure(tmp_path):
     ck2 = Checks()
     report_events(tmp_path, "3b", SimpleNamespace(backend="auto"), ck2, since=20.0)  # old run
     assert not ck2.items
+    (tmp_path / "events.jsonl").write_text(json.dumps(
+        {"event": "vllm_fallback_to_hf", "model": "3b", "error": "X"}) + "\n")  # untimed, old format
+    ck3 = Checks()
+    report_events(tmp_path, "3b", SimpleNamespace(backend="auto"), ck3, since=5.0)
+    assert not ck3.items
