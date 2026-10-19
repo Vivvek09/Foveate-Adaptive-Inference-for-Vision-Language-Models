@@ -29,6 +29,7 @@ import logging
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -115,7 +116,7 @@ def report_events(rd: Path, model: str, args, ck: Checks, since: float = 0.0) ->
     for ev in read_jsonl(f):
         if ev.get("event") != "vllm_fallback_to_hf" or ev.get("model") != model:
             continue
-        if ev.get("time", since) < since:
+        if ev.get("time", 0.0) < since:  # untimed events predate this check: stale
             continue
         ck.add(f"{model}: run", "vLLM engine start", "FAIL",
                f"vLLM did not start, fell back to Transformers: {ev.get('error')}"
@@ -312,6 +313,9 @@ def cmd_smoke(args, cfg):
           "PyAV decode path" if has_video else "frame folders only (install `av`)", level="WARN")
 
     rd = run_dir(args.dataset, "smoke")
+    # Smoke outputs only: start clean so rows, skips and fallback events from an earlier
+    # run (e.g. one before the environment was repaired) are never reported as this one's.
+    shutil.rmtree(rd, ignore_errors=True)
     n_gpu = _n_gpus()
     summary = {"dataset": args.dataset, "questions": [s.qid for s in samples], "models": {},
                "env": env, "dtype": dtype, "imports": summary_imports}
