@@ -129,3 +129,44 @@ def test_gateway_drops_rungs_without_backend_and_flags_wrong_model(tmp_env):
     assert health["routing_ok"] is False and health["dropped_rungs"] == ["7b:4x448"]
     r = httpx.post(f"{url}/ask", json={"qid": samples[0].qid, "policy": "static:7b:4x448"}, timeout=30)
     assert r.status_code == 400
+
+
+def test_gateway_reports_backend_rejection(tmp_env):
+    """A vLLM 400 must reach the client with vLLM's own message, not as a bare 500."""
+    from fastapi import FastAPI
+    from fastapi.responses import JSONResponse
+
+    from foveate.config import VisualConfig
+    from foveate.data import load_samples
+    from foveate.serve.gateway import Gateway, build_app
+
+    bad = FastAPI()
+
+    @bad.get("/v1/models")
+    async def models():
+        return {"data": [{"id": "Qwen/Qwen2.5-VL-3B-Instruct"}]}
+
+    @bad.post("/v1/chat/completions")
+    async def chat():
+        return JSONResponse({"error": {"message": "video metadata missing fps"}}, status_code=400)
+
+    samples = load_samples("synthetic", "full")
+    p_small, p_gw = _port(), _port()
+    _serve(bad, p_small)
+    gw = Gateway({s.qid: s for s in samples}, {"3b": f"http://127.0.0.1:{p_small}"},
+                 {"3b": "Qwen/Qwen2.5-VL-3B-Instruct"}, [VisualConfig.parse("3b:2x224")], tau=0.8,
+                 telemetry=tmp_env / "t.jsonl", store_res=448)
+    _serve(build_app(gw), p_gw)
+    r = httpx.post(f"http://127.0.0.1:{p_gw}/ask", json={"qid": samples[0].qid}, timeout=30)
+    assert r.status_code == 502
+    assert "vLLM returned 400" in r.text and "video metadata missing fps" in r.text
+
+
+def test_probe_reports_each_variant(tmp_env, capsys):
+    from foveate.serve.probe import main
+
+    p = _port()
+    _serve(fake_vllm(0.9), p)
+    main(["--url", f"http://127.0.0.1:{p}"])
+    out = capsys.readouterr().out
+    assert out.count("[200]") == 5 and "RESULT: every variant works" in out

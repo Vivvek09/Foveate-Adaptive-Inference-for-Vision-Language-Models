@@ -56,6 +56,24 @@ P3=$!
 for i in $(seq 1 60); do curl -sf localhost:8000/health >/dev/null && break; sleep 2; done
 curl -sf localhost:8000/health | tee "$RES/serving/gateway_health.json"; echo
 
+# Preflight: one real request through the gateway before hundreds of timed ones. On failure,
+# print the gateway's explanation and the servers' last log lines, then stop.
+QID=$(python - <<PY
+from foveate.data import load_samples
+print(load_samples("mvbench", "$MODE", tasks="$TASKS")[0].qid)
+PY
+)
+code=$(curl -s -o "$RES/serving/preflight.json" -w '%{http_code}' -X POST localhost:8000/ask \
+  -H 'content-type: application/json' -d "{\"qid\": \"$QID\", \"policy\": \"cascade\"}")
+if [[ $code != 200 ]]; then
+  echo "serving preflight failed (HTTP $code):"; cat "$RES/serving/preflight.json"; echo
+  for f in "$RES"/serving/gateway.log "$RES"/serving/vllm_*.log; do
+    echo "--- last lines of $f"; grep -iE "error|exception|traceback" "$f" | tail -n 15 || true
+  done
+  exit 1
+fi
+echo "serving preflight ok: $(head -c 300 "$RES/serving/preflight.json")"
+
 # Static reference: the replay's reference config, if its model is being served.
 REF=${REF:-$(python - <<PY
 import json, os
