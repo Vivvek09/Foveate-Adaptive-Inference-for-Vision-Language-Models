@@ -192,3 +192,37 @@ video requests into one T4, which is when PagedAttention matters (note 05).
 
 **Read next:** the Qwen2.5-VL technical report (arXiv 2502.13923), sections on the
 vision encoder and dynamic resolution; the PyTorch profiler docs; then note 02.
+
+---
+
+## 9. Measured results (pilot run, Kaggle 2x T4, Oct 19 2026)
+
+From `results/REPORT.md`, Stage 1 (Qwen2.5-VL-3B, Transformers, batch 1, CUDA events,
+medians after warm-up). GPU time below = vision encoder + prefill.
+
+| Setting | Visual tokens | Vision (ms) | Prefill (ms) | GPU time (ms) | CPU load + preprocess (ms) |
+|---|---|---|---|---|---|
+| 1 × 224 | 60 | 42 | 72 | 114 | 16 |
+| 4 × 448 | 504 | 262 | 310 | 572 | 71 |
+| 8 × 448 | 1,008 | 511 | 627 | 1,138 | 161 |
+| 1 × 896 | 1,008 | 544 | 637 | 1,181 | 58 |
+| 16 × 448 | 2,016 | 1,024 | 1,710 | 2,734 | 327 |
+| 16 × 672 | 4,464 | 2,378 | 5,858 | 8,236 | 482 |
+
+What the predictions in this note got right and wrong:
+
+- **Tokens set the cost (confirmed).** GPU time is about 1.2 ms per visual token up to
+  ~1,100 tokens (fit R² 0.99 up to 2,000 tokens), whatever produced the tokens: 1 frame
+  at 896 px and 8 frames at 448 px both give 1,008 tokens and cost 1,181 vs 1,138 ms.
+- **Superlinear past ~2,000 tokens.** 1.85 ms per token at 4,464 tokens: attention's
+  quadratic term and memory pressure. 16 × 896 ran out of memory on the 16 GB card.
+- **The vision encoder is 37 to 48% of GPU time (confirmed "nearly half").**
+- **Section 3's estimate was optimistic.** 16 × 448 took 2.7 s of GPU time against the
+  0.75 to 1.2 s estimate: measured `prefill_mfu` was 0.07 to 0.18, below the 30 to 50%
+  assumed. Batch-1 Transformers kernels on a T4 leave most of the peak unused.
+- **Decode.** TPOT was ~51 ms against the 19 ms bandwidth floor (about 37% of it), in
+  Transformers at batch 1 without CUDA graphs.
+- **Cold start.** The first request took 3,697 ms of GPU time at 1 × 224 against a
+  1,698 ms warm median (both with 32 decode steps).
+- **CPU matters.** Load + preprocess reached 482 ms at 16 × 672; on vLLM, video decode
+  was ~340 to 370 ms per question in the smoke test, larger than the model call.
