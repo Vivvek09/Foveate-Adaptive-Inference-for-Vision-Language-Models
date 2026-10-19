@@ -28,6 +28,7 @@ import json
 import logging
 import math
 import os
+import re
 import subprocess
 import sys
 import time
@@ -65,6 +66,62 @@ def _n_gpus() -> int:
         return 0
 
 
+def _log_summary(text: str) -> str:
+    """The first and last error lines of a log (the first is usually the real cause), else its tail."""
+    lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
+    errs = [ln for ln in lines if re.match(r"^[\w.]*(Error|Exception)\b.*:", ln)]
+    picked = list(dict.fromkeys(errs[:1] + errs[-1:])) if errs else lines[-3:]
+    return " | ".join(picked)[-600:]
+
+
+# Modules whose failure breaks the run, and the fix to print. torchaudio and torchcodec are
+# never used by Foveate (frames go in as PIL images, no audio), but transformers imports
+# torchaudio at module level when it is installed, so a mismatched build breaks AutoProcessor.
+_IMPORT_FIX = {
+    "torch": "reinstall the GPU stack: bash scripts/setup_gpu.sh",
+    "torchvision": "install the torchvision built for this torch: bash scripts/setup_gpu.sh",
+    "torchaudio": "unused by Foveate but breaks transformers: pip uninstall -y torchaudio",
+    "torchcodec": "unused by Foveate but can break transformers: pip uninstall -y torchcodec",
+    "transformers": "see the error; usually a mismatched torchaudio/torchvision (bash scripts/setup_gpu.sh)",
+    "vllm": "see the error; reinstall with bash scripts/setup_gpu.sh, or run with --backend hf",
+    "av": "pip install av",
+}
+
+
+def preflight_imports(args, ck: Checks, result: dict | None = None) -> dict:
+    """Import the stack in a fresh interpreter and name the module that really fails."""
+    from .utils import import_check
+
+    res = result if result is not None else import_check()
+    for mod, r in res.items():
+        if r.get("ok") is None:  # not installed; required packages are checked elsewhere
+            continue
+        if r.get("ok"):
+            ck.add("environment", f"import {mod}", "PASS", str(r.get("version")))
+            continue
+        level = "WARN" if mod == "vllm" and args.backend == "hf" else "FAIL"
+        ck.add("environment", f"import {mod}", level,
+               f"{r.get('error')}; fix: {_IMPORT_FIX.get(mod, 'see the error')}")
+    return res
+
+
+def report_events(rd: Path, model: str, args, ck: Checks, since: float = 0.0) -> None:
+    """Surface backend fallbacks logged by the grid process: a silent HF run is not a pass."""
+    from .utils import read_jsonl
+
+    f = rd / "events.jsonl"
+    if not f.exists():
+        return
+    for ev in read_jsonl(f):
+        if ev.get("event") != "vllm_fallback_to_hf" or ev.get("model") != model:
+            continue
+        if ev.get("time", since) < since:
+            continue
+        ck.add(f"{model}: run", "vLLM engine start", "FAIL",
+               f"vLLM did not start, fell back to Transformers: {ev.get('error')}"
+               f" (root cause: {ev.get('root_cause', 'n/a')})")
+
+
 def _run_grid(args, model: str, gpu: int | None, ck: Checks) -> bool:
     cmd = [sys.executable, "-m", "foveate.cli"]
     if args.config:
@@ -87,7 +144,7 @@ def _run_grid(args, model: str, gpu: int | None, ck: Checks) -> bool:
     logs = C.results_root() / "smoke" / f"grid_{model}.log"
     logs.parent.mkdir(parents=True, exist_ok=True)
     logs.write_text(proc.stdout + proc.stderr)
-    tail = " | ".join((proc.stderr or proc.stdout).strip().splitlines()[-3:])[-400:]
+    tail = _log_summary(proc.stdout + proc.stderr)
     return ck.ok(f"{model}: run", "grid process exit code", proc.returncode == 0,
                  f"exit {proc.returncode} in {wall:.0f}s; log {logs}" + ("" if proc.returncode == 0
                                                                        else f"; tail: {tail}"))
@@ -237,6 +294,7 @@ def cmd_smoke(args, cfg):
         v = (env.get("packages") or {}).get(pkg)
         ck.ok("environment", f"{pkg} installed", v is not None, v or "missing",
               level="WARN" if pkg in ("vllm", "av") and args.backend != "vllm" else "FAIL")
+    summary_imports = preflight_imports(args, ck)
 
     if args.dataset == "synthetic":
         from .data import synthetic
@@ -256,14 +314,17 @@ def cmd_smoke(args, cfg):
     rd = run_dir(args.dataset, "smoke")
     n_gpu = _n_gpus()
     summary = {"dataset": args.dataset, "questions": [s.qid for s in samples], "models": {},
-               "env": env, "dtype": dtype}
+               "env": env, "dtype": dtype, "imports": summary_imports}
     if dtype is not None and not ck.failed:
         for model in args.models:
             gpu = (1 if model != "3b" and n_gpu > 1 else 0) if n_gpu else None
             configs = [c.name for c in C.grid_configs(cfg, args.dataset, model, "smoke")]
             ck.add(f"{model}: run", "placement", "INFO",
                    (f"GPU {gpu}" if gpu is not None else "CPU") + f" (own process, own memory); configs {configs}")
+            t_start = time.time()
             _run_grid(args, model, gpu, ck)
+            if args.backend != "hf":
+                report_events(rd, model, args, ck, since=t_start)
             summary["models"][model] = validate_grid(rd, model, configs, len(samples), ck,
                                                      synthetic=args.dataset == "synthetic")
         if args.profile:
