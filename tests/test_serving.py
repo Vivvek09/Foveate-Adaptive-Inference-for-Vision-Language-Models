@@ -170,3 +170,17 @@ def test_probe_reports_each_variant(tmp_env, capsys):
     main(["--url", f"http://127.0.0.1:{p}"])
     out = capsys.readouterr().out
     assert out.count("[200]") == 5 and "RESULT: every variant works" in out
+
+
+def test_serve_scripts_allow_per_request_fps():
+    # vLLM >= 0.32 rejects the gateway's media_io_kwargs (per-request fps) with a 400
+    # unless the server is started with --trust-request-mm-kwargs (seen on Kaggle).
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1] / "scripts"
+    for name in ("serve_and_load.sh", "serve_check.sh"):
+        text = root.joinpath(name).read_text()
+        cmds = re.findall(r"vllm serve .*?(?:\n(?!\s).*?$|2>&1)", text, flags=re.S | re.M)
+        assert cmds, name
+        for cmd in cmds:
+            assert "--trust-request-mm-kwargs" in cmd, (name, cmd)

@@ -9,7 +9,7 @@ MMKW="{\"min_pixels\": 784, \"max_pixels\": $((MAXRES * MAXRES))}"
 CUDA_VISIBLE_DEVICES=0 nohup vllm serve Qwen/Qwen2.5-VL-3B-Instruct --port 8001 \
   --dtype half --max-model-len 8192 --gpu-memory-utilization 0.88 \
   --limit-mm-per-prompt '{"video": 1, "image": 0}' --mm-processor-kwargs "$MMKW" \
-  --enable-prefix-caching > "$RES/serving/vllm_3b_check.log" 2>&1 &
+  --enable-prefix-caching --trust-request-mm-kwargs > "$RES/serving/vllm_3b_check.log" 2>&1 &
 P=$!
 trap 'kill $P 2>/dev/null || true' EXIT
 for i in $(seq 1 180); do curl -sf localhost:8001/health >/dev/null && break; sleep 5; done
