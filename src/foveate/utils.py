@@ -76,7 +76,7 @@ def capture_env() -> dict[str, Any]:
         "kaggle": bool(os.environ.get("KAGGLE_KERNEL_RUN_TYPE")),
         "packages": {
             p: _pkg_version(p)
-            for p in ["torch", "transformers", "vllm", "foveate", "av", "numpy", "accelerate"]
+            for p in ["torch", "torchvision", "torchaudio", "torchcodec", "transformers", "vllm", "foveate", "av", "numpy", "accelerate"]
         },
     }
     try:
@@ -128,6 +128,69 @@ def default_dtype() -> str:
     except ImportError:
         pass
     return "float16"
+
+
+def root_cause(e: BaseException) -> str:
+    """The innermost exception of a chain, as "Type: first line".
+
+    Lazy importers (transformers' `Could not import module 'AutoProcessor'`)
+    hide the real failure, e.g. a torchaudio built for another torch, behind
+    __cause__/__context__; this is the line worth showing.
+    """
+    seen = set()
+    while id(e) not in seen:
+        seen.add(id(e))
+        nxt = e.__cause__ or e.__context__
+        if nxt is None:
+            break
+        e = nxt
+    first = str(e).strip().splitlines()[0][:300] if str(e).strip() else ""
+    return f"{type(e).__name__}: {first}"
+
+
+IMPORT_CHECK = """
+import importlib, json, sys
+out = {}
+for mod, names in [("torch", []), ("torchvision", []), ("torchaudio", []), ("torchcodec", []),
+                   ("av", []), ("transformers", ["AutoProcessor", "Qwen2_5_VLForConditionalGeneration"]),
+                   ("vllm", ["LLM", "SamplingParams"])]:
+    try:
+        m = importlib.import_module(mod)
+        for n in names:
+            getattr(m, n)
+        out[mod] = {"ok": True, "version": getattr(m, "__version__", None)}
+    except ModuleNotFoundError as e:
+        if e.name == mod:
+            out[mod] = {"ok": None, "error": "not installed"}
+            continue
+        out[mod] = {"ok": False, "exc": e}
+    except BaseException as e:  # noqa: BLE001
+        out[mod] = {"ok": False, "exc": e}
+    if out[mod].get("exc") is not None:
+        e = out[mod].pop("exc")
+        seen = set()
+        while id(e) not in seen and (e.__cause__ or e.__context__) is not None:
+            seen.add(id(e))
+            e = e.__cause__ or e.__context__
+        msg = str(e).strip().splitlines()[0][:300] if str(e).strip() else ""
+        out[mod]["error"] = f"{type(e).__name__}: {msg}"
+print(json.dumps(out))
+"""
+
+
+def import_check(timeout: float = 600.0) -> dict:
+    """Import the GPU stack in a fresh interpreter; report each module's root-cause error.
+
+    Optional modules (torchaudio, torchcodec) are reported as broken rather than
+    ignored because transformers imports torchaudio at module level whenever it
+    is installed, so a torchaudio built for another torch breaks AutoProcessor.
+    """
+    proc = subprocess.run([sys.executable, "-c", IMPORT_CHECK], capture_output=True, text=True,
+                          timeout=timeout)
+    try:
+        return json.loads(proc.stdout.strip().splitlines()[-1])
+    except (IndexError, ValueError):
+        return {"_check": {"ok": False, "error": (proc.stderr or proc.stdout)[-300:]}}
 
 
 def gpu_capability() -> tuple[int, int] | None:
