@@ -18,10 +18,11 @@ pytest.importorskip("av")
 
 
 def test_smoke_command_with_tiny_model(tmp_env):
-    import tiny_qwen
     import yaml
 
     from foveate.config import load_config
+
+    import tiny_qwen
 
     model, proc = tiny_qwen.build()
     mdir = tmp_env / "tiny-qwen"

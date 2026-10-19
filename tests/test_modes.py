@@ -3,7 +3,6 @@
 import json
 
 import pytest
-from fake_backend import FakeBackend
 
 from foveate import config as C
 from foveate.config import VisualConfig
@@ -11,6 +10,8 @@ from foveate.data import load_samples
 from foveate.grid import run_dir, run_grid
 from foveate.memory import check_fit, record_skips
 from foveate.smoke import Checks, validate_grid
+
+from fake_backend import FakeBackend
 
 
 def test_modes_select_nested_subsets(tmp_env):
