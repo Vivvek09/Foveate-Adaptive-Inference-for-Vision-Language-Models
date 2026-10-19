@@ -8,6 +8,12 @@ Workload knobs:
   rate        mean arrivals per second (Poisson, seeded)
   repeat      fraction of requests that reuse a recently seen clip with a
               different question (exercises vLLM's prefix + encoder caches)
+
+Comparability: for a given (rate, n, repeat, seed) every policy gets the same
+trace, i.e. the same questions at the same arrival times. Warm-up requests
+(sequential, from a different seed so they do not pre-fill the cache for the
+trace's own clips) are sent before the clock starts and summarized separately
+as cold_*; percentiles cover only the timed trace.
 """
 
 from __future__ import annotations
@@ -44,11 +50,21 @@ def make_trace(samples: list[Sample], n: int, rate: float, repeat: float, seed: 
     return trace
 
 
-async def run_trace(url: str, trace: list[dict], policy: str, out: Path, timeout: float = 600.0) -> dict:
+async def run_trace(url: str, trace: list[dict], policy: str, out: Path, timeout: float = 600.0,
+                    warmup: list[str] | None = None) -> dict:
     import httpx
 
     results = []
+    cold: list[float] = []
     async with httpx.AsyncClient(timeout=timeout, limits=httpx.Limits(max_connections=1024)) as client:
+        for qid in warmup or []:
+            t = time.perf_counter()
+            try:
+                r = await client.post(f"{url}/ask", json={"qid": qid, "policy": policy})
+                r.raise_for_status()
+                cold.append((time.perf_counter() - t) * 1e3)
+            except Exception:  # noqa: BLE001 - reported via the count
+                pass
         t0 = time.perf_counter()
 
         async def one(item):
@@ -75,7 +91,13 @@ async def run_trace(url: str, trace: list[dict], policy: str, out: Path, timeout
         for r in results:
             r.pop("calls", None)
             f.write(json.dumps(r) + "\n")
-    return summarize(results, wall, policy)
+    summ = summarize(results, wall, policy)
+    summ.update({"warmup_requests": len(warmup or []), "warmup_ok": len(cold),
+                 "cold_first_ms": cold[0] if cold else None,
+                 "cold_p50_ms": float(np.median(cold)) if cold else None,
+                 "trace_span_s": trace[-1]["t"] if trace else 0.0,
+                 "offered_rps": len(trace) / trace[-1]["t"] if trace and trace[-1]["t"] else None})
+    return summ
 
 
 def summarize(results: list[dict], wall: float, policy: str) -> dict:
@@ -86,6 +108,7 @@ def summarize(results: list[dict], wall: float, policy: str) -> dict:
     esc = [len(r.get("rungs", [])) > 1 for r in ok]
     return {
         "policy": policy, "requests": len(results), "ok": len(ok), "wall_s": wall,
+        # completed requests / makespan (first arrival to last completion)
         "throughput_rps": len(ok) / wall if wall else float("nan"),
         "p50_ms": float(np.nanpercentile(lat, 50)), "p95_ms": float(np.nanpercentile(lat, 95)),
         "p99_ms": float(np.nanpercentile(lat, 99)), "mean_ms": float(np.nanmean(lat)),

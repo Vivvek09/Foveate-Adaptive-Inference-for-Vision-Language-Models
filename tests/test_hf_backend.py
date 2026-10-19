@@ -11,10 +11,10 @@ from foveate.tokens import visual_tokens
 
 
 def test_profile_and_predict(tmp_env):
-    import tiny_qwen
-
     from foveate.backends.hf_backend import HFBackend
     from foveate.profile import run_profile, summarize
+
+    import tiny_qwen
 
     model, proc = tiny_qwen.build()
     b = HFBackend("tiny", model=model, processor=proc, device="cpu", dtype="float32")
@@ -30,4 +30,4 @@ def test_profile_and_predict(tmp_env):
     rows = run_profile(b, "tiny", [s], [2, 4], [224], 2, [1, 4], 1, 2,
                        tmp_env / "p.jsonl")
     summ = summarize(rows, "tiny")
-    assert {r["sweep"] for r in summ} == {"visual", "decode"}
+    assert {r["sweep"] for r in summ} == {"cold", "visual", "decode"}

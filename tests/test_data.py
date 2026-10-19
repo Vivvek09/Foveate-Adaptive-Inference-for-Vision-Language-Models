@@ -1,6 +1,6 @@
 from foveate.data import Sample, load_samples, pilot_subset, shard
-from foveate.data.frames import FrameStore, image_stats, sample_indices
 from foveate.data.corrupt import apply_corruption
+from foveate.data.frames import FrameStore, image_stats, sample_indices
 
 
 def _samples(n_tasks=4, per=50):

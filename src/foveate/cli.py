@@ -1,7 +1,11 @@
 """Command-line entry point: `foveate <command> ...`.
 
-Every command that touches data takes --subset pilot (fixed-seed 30%, the
-default) or --subset full (also spelled --pilot / --full).
+Every command that touches data takes a mode:
+    --smoke   8 questions x 1-2 configs: does the GPU stack work at all?
+    --pilot   fixed-seed 30% stratified by task (the default)
+    --full    everything, resumable across sessions
+(also spelled --subset smoke|pilot|full). `foveate smoke` runs and checks the
+smoke mode end to end and writes results/smoke/SMOKE.md.
 """
 
 from __future__ import annotations
@@ -22,8 +26,10 @@ log = logging.getLogger("foveate")
 
 def _subset_args(p: argparse.ArgumentParser) -> None:
     g = p.add_mutually_exclusive_group()
-    g.add_argument("--subset", choices=["pilot", "full"], default="pilot",
-                   help="pilot = fixed-seed 30%% stratified subset (default); full = everything")
+    g.add_argument("--subset", choices=["smoke", "pilot", "full"], default="pilot",
+                   help="smoke = 8 questions x 1-2 configs; pilot = fixed-seed 30%% stratified "
+                        "subset (default); full = everything")
+    g.add_argument("--smoke", dest="subset", action="store_const", const="smoke")
     g.add_argument("--pilot", dest="subset", action="store_const", const="pilot")
     g.add_argument("--full", dest="subset", action="store_const", const="full")
     p.add_argument("--tasks", default=None,
@@ -112,40 +118,79 @@ def _spawn_shards(args, n_gpus: int) -> None:
 def cmd_grid(args, cfg):
     if args.gpus > 1 and args.shard is None:
         return _spawn_shards(args, args.gpus)
-    from .grid import HFGridAdapter, run_grid
+    from .grid import HFGridAdapter, run_dir, run_grid
+    from .memory import check_fit, record_skip, record_skips
+    from .utils import resolve_dtype
 
     samples = _samples(args, cfg)
     configs = ([C.VisualConfig.parse(s, args.model) for s in args.configs]
-               if args.configs else C.grid_configs(cfg, args.dataset, args.model))
+               if args.configs else C.grid_configs(cfg, args.dataset, args.model, args.subset))
     configs = [c for c in configs if c.model == args.model]
     mid = C.model_id(cfg, args.model)
+    quant = C.model_quantization(cfg, args.model)
+    rd = run_dir(args.dataset, args.subset)
+    dtype = resolve_dtype(args.dtype)  # explicit: fp16 on T4, never a silent bf16
+    if quant == "awq":
+        dtype = "float16"
+    corr_tag = ",".join(args.corruption) if args.corruption else None
+
+    def fit(kind):
+        checks = [check_fit(c, mid, backend=kind, dtype=dtype, max_model_len=args.max_model_len,
+                            gpu_mem_util=args.gpu_mem) for c in configs]
+        record_skips(rd, checks, {"corruption": corr_tag})
+        return [c for c, k in zip(configs, checks) if k.ok]
+
     backend = None
     if args.backend in ("vllm", "auto"):
+        ok = fit("vllm")
+        if not ok:
+            log.warning("no config fits on this GPU with vLLM; nothing to run")
+            return
         try:
             from .backends.vllm_backend import VLLMBackend
 
             backend = VLLMBackend(
-                mid, quantization=C.model_quantization(cfg, args.model), dtype=args.dtype,
-                max_res=max(c.res for c in configs), max_model_len=args.max_model_len,
+                mid, quantization=quant, dtype=dtype,
+                max_res=max(c.res for c in ok), max_model_len=args.max_model_len,
                 gpu_memory_utilization=args.gpu_mem, enforce_eager=args.enforce_eager,
                 tensor_parallel_size=args.tp, max_num_seqs=args.max_num_seqs, seed=cfg["seed"],
             )
+            configs = ok
         except Exception as e:  # noqa: BLE001 - any vLLM start-up failure
             if args.backend == "vllm":
                 raise
-            log.warning("vLLM unavailable (%s: %s); falling back to the Transformers backend "
-                        "(batch 1, slower)", type(e).__name__, str(e).splitlines()[0][:200])
+            msg = f"{type(e).__name__}: {str(e).splitlines()[0][:300] if str(e) else ''}"
+            log.warning("vLLM unavailable (%s); falling back to the Transformers backend. Its rows "
+                        "are labelled backend=hf: accuracy is comparable, timings are not.", msg)
+            _log_event(rd, {"event": "vllm_fallback_to_hf", "model": args.model, "error": msg,
+                            "shard": args.shard})
             _free_gpu()
     if backend is None:
+        if quant:
+            # The HF path here loads plain fp16 checkpoints only; never swap in another model.
+            for c in configs:
+                record_skip(rd, c.name, mid, "hf", dtype,
+                            f"{quant} checkpoint needs vLLM; the Transformers fallback does not "
+                            "load it on T4 in this project", corruption=corr_tag)
+            return
+        configs = fit("hf")
+        if not configs:
+            return
         from .backends.hf_backend import HFBackend
 
-        backend = HFGridAdapter(HFBackend(mid, dtype=args.dtype, attn_implementation=args.attn))
+        backend = HFGridAdapter(HFBackend(mid, dtype=dtype, attn_implementation=args.attn))
     corruptions = args.corruption or [None]
     for corr in corruptions:
         run_grid(backend, samples, configs, dataset=args.dataset, subset=args.subset,
                  corruption=corr, shard_id=args.shard or 0, num_shards=args.num_shards,
                  batch_size=args.batch_size, probe=0 if corr else args.probe,
                  workers=args.workers, store_res=_store_res(cfg, args.dataset))
+
+
+def _log_event(rd: Path, rec: dict) -> None:
+    rd.mkdir(parents=True, exist_ok=True)
+    with (rd / "events.jsonl").open("a") as f:
+        f.write(json.dumps(rec) + "\n")
 
 
 def _free_gpu():
@@ -217,6 +262,8 @@ def cmd_serve(args, cfg):
 
     samples = {s.qid: s for s in _samples(args, cfg)}
     pol = json.loads(Path(args.policy_file).read_text()) if args.policy_file else {}
+    if args.tau is None and "tau" not in pol:
+        log.warning("no policy file: using the untuned default tau=0.6 (run `foveate replay`)")
     ladder = [C.VisualConfig.parse(s) for s in (pol.get("ladder") or cfg["ladder"][args.dataset])]
     backends = dict(b.split("=", 1) for b in args.backends)
     gw = Gateway(samples, backends, {k: v["id"] for k, v in cfg["models"].items()}, ladder,
@@ -232,11 +279,14 @@ def cmd_loadtest(args, cfg):
     from .serve.loadgen import make_trace, run_trace
 
     samples = _samples(args, cfg)
+    # Same seed for every policy -> identical arrivals and questions (comparable load).
     trace = make_trace(samples, args.n, args.rate, args.repeat, seed=cfg["seed"])
+    warm = [t["qid"] for t in make_trace(samples, args.warmup, 1.0, 0.0, seed=cfg["seed"] + 1)]
     tag = args.tag or f"{args.policy.replace(':', '-')}_r{args.rate}"
     out = C.results_root() / "serving" / f"{tag}.jsonl"
-    summ = asyncio.run(run_trace(args.url, trace, args.policy, out))
-    summ.update({"rate": args.rate, "repeat": args.repeat})
+    summ = asyncio.run(run_trace(args.url, trace, args.policy, out, warmup=warm))
+    summ.update({"rate": args.rate, "repeat": args.repeat, "n": args.n, "seed": cfg["seed"],
+                 "backend": "vllm serve (OpenAI API)"})
     out.with_suffix(".summary.json").write_text(json.dumps(summ, indent=1))
     print(json.dumps(summ, indent=1))
 
@@ -272,7 +322,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out-tokens", type=int)
     p.add_argument("--repeats", type=int)
     p.add_argument("--warmup", type=int)
-    p.add_argument("--dtype", default="auto")
+    p.add_argument("--dtype", default="auto", help="auto = float16 on T4 (bf16 only on Ampere+)")
     p.add_argument("--attn", default="sdpa")
     p.add_argument("--peak-tflops", type=float)
     p.add_argument("--mem-bw", type=float)
@@ -291,7 +341,8 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--batch-size", type=int, default=32)
         p.add_argument("--probe", type=int, default=16, help="batch-1 latency probe size")
         p.add_argument("--workers", type=int, default=4, help="frame-loading threads")
-        p.add_argument("--dtype", default="auto")
+        p.add_argument("--dtype", default="auto",
+                       help="auto = float16 on T4 (bf16 only on Ampere+)")
         p.add_argument("--attn", default="sdpa")
         p.add_argument("--gpu-mem", type=float, default=0.90)
         p.add_argument("--max-model-len", type=int, default=8192)
@@ -302,6 +353,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     grid_args(sub.add_parser("grid", help="stage 2: run configs over every question (vLLM)"))
     grid_args(sub.add_parser("shift", help="stage 4: rerun shift configs on corrupted frames"))
+
+    p = sub.add_parser("smoke", help="first GPU check: 8 questions x 1-2 configs per model, "
+                                     "every stage validated, results/smoke/SMOKE.md")
+    p.add_argument("--dataset", default="synthetic", choices=["synthetic", "mvbench", "lingoqa"],
+                   help="synthetic needs no download (default); mvbench needs `foveate download`")
+    p.add_argument("--tasks", default=None)
+    p.add_argument("--models", nargs="+", default=["3b"], help="e.g. 3b 7b")
+    p.add_argument("--backend", choices=["auto", "vllm", "hf"], default="auto")
+    p.add_argument("--profile", action="store_true", help="also time one profile setting (HF)")
+    p.add_argument("--dtype", default="auto", help="auto = float16 on T4 (bf16 only on Ampere+)")
+    p.add_argument("--gpu-mem", type=float, default=0.90)
+    p.add_argument("--max-model-len", type=int, default=8192)
+    p.add_argument("--enforce-eager", action="store_true")
+    p.add_argument("--allow-cpu", action="store_true",
+                   help="run without a GPU (CI integration test with a tiny model; not a GPU check)")
 
     p = sub.add_parser("judge", help="score LingoQA answers with Lingo-Judge")
     p.add_argument("--dataset", default="lingoqa")
@@ -333,6 +399,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--rate", type=float, default=1.0, help="requests per second")
     p.add_argument("--n", type=int, default=200)
     p.add_argument("--repeat", type=float, default=0.3, help="share of repeated-clip requests")
+    p.add_argument("--warmup", type=int, default=5, help="untimed sequential warm-up requests")
     p.add_argument("--tag", default=None)
 
     sub.add_parser("report", help="figures + results/REPORT.md")
@@ -340,7 +407,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 COMMANDS = {
-    "env": cmd_env, "download": cmd_download, "profile": cmd_profile, "grid": cmd_grid,
+    "env": cmd_env, "download": cmd_download, "smoke": lambda a, c: __import__(
+        "foveate.smoke", fromlist=["cmd_smoke"]).cmd_smoke(a, c), "profile": cmd_profile, "grid": cmd_grid,
     "shift": cmd_shift, "judge": cmd_judge, "replay": cmd_replay, "serve": cmd_serve,
     "loadtest": cmd_loadtest, "report": cmd_report,
 }

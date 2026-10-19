@@ -21,12 +21,16 @@ def _port():
     return p
 
 
-def fake_vllm(answer_conf: float):
+def fake_vllm(answer_conf: float, served: str = "Qwen/Qwen2.5-VL-3B-Instruct"):
     from fastapi import FastAPI, Request
     from fastapi.responses import StreamingResponse
 
     app = FastAPI()
     app.state.bodies = []
+
+    @app.get("/v1/models")
+    async def models():
+        return {"data": [{"id": served}]}
 
     @app.post("/v1/chat/completions")
     async def chat(req: Request):
@@ -73,7 +77,8 @@ def test_gateway_cascade_and_loadtest(tmp_env):
 
     samples = load_samples("synthetic", "full")
     p_small, p_big, p_gw = _port(), _port(), _port()
-    small, big = fake_vllm(0.55), fake_vllm(0.95)  # cheap model unsure, big model sure
+    # cheap model unsure, big model sure
+    small, big = fake_vllm(0.55), fake_vllm(0.95, "Qwen/Qwen2.5-VL-7B-Instruct-AWQ")
     _serve(small, p_small)
     _serve(big, p_big)
     ladder = [VisualConfig.parse("3b:2x224"), VisualConfig.parse("7b:4x448")]
@@ -83,6 +88,9 @@ def test_gateway_cascade_and_loadtest(tmp_env):
                  ladder, tau=0.8, telemetry=tmp_env / "results" / "serving" / "t.jsonl", store_res=448)
     _serve(build_app(gw), p_gw)
     url = f"http://127.0.0.1:{p_gw}"
+    health = httpx.get(f"{url}/health", timeout=10).json()
+    assert health["routing_ok"] is True and health["backends"]["7b"]["served"] == [
+        "Qwen/Qwen2.5-VL-7B-Instruct-AWQ"]
     r = httpx.post(f"{url}/ask", json={"qid": samples[0].qid}, timeout=30)
     assert r.status_code == 200, r.text
     r = r.json()
@@ -95,5 +103,29 @@ def test_gateway_cascade_and_loadtest(tmp_env):
                    timeout=30).json()
     assert r["rungs"] == ["3b:2x224"]
     trace = make_trace(samples, 12, rate=20.0, repeat=0.5)
-    summ = asyncio.run(run_trace(url, trace, "cascade", tmp_env / "results" / "serving" / "x.jsonl"))
+    assert trace == make_trace(samples, 12, rate=20.0, repeat=0.5)  # same load for every policy
+    summ = asyncio.run(run_trace(url, trace, "cascade", tmp_env / "results" / "serving" / "x.jsonl",
+                                 warmup=[samples[1].qid, samples[2].qid]))
     assert summ["ok"] == 12 and summ["escalation_rate"] == 1.0 and summ["p95_ms"] > 0
+    assert summ["warmup_ok"] == 2 and summ["cold_first_ms"] > 0
+
+
+def test_gateway_drops_rungs_without_backend_and_flags_wrong_model(tmp_env):
+    from foveate.config import VisualConfig
+    from foveate.data import load_samples
+    from foveate.serve.gateway import Gateway, build_app
+
+    samples = load_samples("synthetic", "full")
+    p_small, p_gw = _port(), _port()
+    _serve(fake_vllm(0.55, served="some/other-model"), p_small)
+    ladder = [VisualConfig.parse("3b:2x224"), VisualConfig.parse("7b:4x448")]
+    gw = Gateway({s.qid: s for s in samples}, {"3b": f"http://127.0.0.1:{p_small}"},
+                 {"3b": "Qwen/Qwen2.5-VL-3B-Instruct", "7b": "Qwen/Qwen2.5-VL-7B-Instruct-AWQ"},
+                 ladder, tau=0.8, telemetry=tmp_env / "t.jsonl", store_res=448)
+    assert [c.name for c in gw.ladder] == ["3b:2x224"] and gw.dropped == ["7b:4x448"]
+    _serve(build_app(gw), p_gw)
+    url = f"http://127.0.0.1:{p_gw}"
+    health = httpx.get(f"{url}/health", timeout=10).json()
+    assert health["routing_ok"] is False and health["dropped_rungs"] == ["7b:4x448"]
+    r = httpx.post(f"{url}/ask", json={"qid": samples[0].qid, "policy": "static:7b:4x448"}, timeout=30)
+    assert r.status_code == 400

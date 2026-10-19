@@ -3,8 +3,8 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
-data/
-cache/
+/data/
+/cache/
 results/*
 !results/.gitkeep
 .ipynb_checkpoints/

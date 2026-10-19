@@ -2,15 +2,27 @@ name: ci
 on: [push, pull_request]
 jobs:
   test:
+    # CPU only: unit tests, the real Transformers code path on a tiny random
+    # Qwen2.5-VL, and mocked end-to-end/serving tests. No GPU, no vLLM, no
+    # real checkpoints: see README "What is verified".
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
       - name: Install (CPU only)
         run: |
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-          pip install -e ".[data,hf,dev]"
+          pip install -e ".[data,hf,serve,dev]" "ruff==0.17.1"
+      - name: Lint
+        run: ruff check src tests tools
+      - name: Notebook is built from this revision
+        run: |
+          python tools/build_notebook.py
+          git diff --exit-code notebooks/foveate_kaggle.ipynb
       - name: Tests
         run: pytest -q

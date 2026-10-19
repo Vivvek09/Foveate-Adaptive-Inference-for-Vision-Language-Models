@@ -10,7 +10,7 @@ major=${DRV_CUDA%%.*}; minor=${DRV_CUDA##*.}
 if [[ -z "${DRV_CUDA}" ]]; then
   echo "no NVIDIA GPU found; installing CPU-only extras"; VLLM_SPEC=""
 elif (( major >= 13 )); then
-  VLLM_SPEC="vllm==0.32.0"          # tested API target (torch cu130 wheels)
+  VLLM_SPEC="vllm==0.32.0"          # API the code was written against (torch cu130 wheels)
 elif (( major == 12 && minor >= 8 )); then
   VLLM_SPEC="vllm==0.11.0"          # torch 2.8 / cu128 wheels
 else
@@ -21,7 +21,7 @@ VLLM_SPEC=${VLLM_OVERRIDE:-$VLLM_SPEC}
 
 if [[ -n "${VLLM_SPEC}" ]]; then
   echo "installing ${VLLM_SPEC}"
-  pip install -q "${VLLM_SPEC}" || echo "WARNING: vLLM install failed; the grid will fall back to Transformers"
+  pip install -q "${VLLM_SPEC}" || echo "WARNING: vLLM install failed; grids with --backend auto fall back to Transformers (labelled backend=hf), serving is unavailable"
 fi
 pip install -q -e ".[data,hf,serve,dev]"
 python - <<'PY'

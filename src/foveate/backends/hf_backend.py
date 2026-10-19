@@ -52,23 +52,30 @@ class StageTiming:
 
 
 class HFBackend:
+    kind = "hf"
+
     def __init__(
         self,
         model_id: str,
         dtype: str = "auto",
         attn_implementation: str = "sdpa",
-        device: str = "cuda",
+        device: str = "auto",
         model=None,
         processor=None,
     ):
         import torch
         from transformers import AutoProcessor
 
-        from ..utils import default_dtype
+        from ..utils import resolve_dtype
 
+        t_load = time.perf_counter()
         self.torch = torch
+        if device == "auto":
+            device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = device
-        self.dtype_name = default_dtype() if dtype == "auto" else dtype
+        self.model_id = model_id
+        self.attn_implementation = attn_implementation
+        self.dtype_name = resolve_dtype(dtype)  # fp16 on T4; explicit bf16 on T4 raises
         torch_dtype = getattr(torch, self.dtype_name)
         if model is None:
             from transformers import Qwen2_5_VLForConditionalGeneration
@@ -85,7 +92,7 @@ class HFBackend:
         self.tok = self.processor.tokenizer
         self.video_token_id = self.processor.video_token_id
         inner = getattr(self.model, "model", self.model)
-        self.visual = getattr(inner, "visual", None) or getattr(self.model, "visual")
+        self.visual = getattr(inner, "visual", None) or self.model.visual
         self._events: dict[str, list] = {"v0": [], "v1": [], "steps": []}
         self.visual.register_forward_pre_hook(lambda m, a: self._mark("v0"))
         self.visual.register_forward_hook(lambda m, a, o: self._mark("v1"))
@@ -94,6 +101,14 @@ class HFBackend:
             ids = self.tok.encode(L, add_special_tokens=False)
             if len(ids) == 1:
                 self.letter_ids[L] = ids[0]
+        self.load_s = time.perf_counter() - t_load
+
+    def info(self) -> dict:
+        import transformers
+
+        return {"kind": self.kind, "model_id": self.model_id, "dtype": self.dtype_name,
+                "attn_implementation": self.attn_implementation,
+                "transformers": transformers.__version__, "load_s": self.load_s}
 
     # -- timing helpers ---------------------------------------------------
     @property
@@ -208,6 +223,7 @@ class HFBackend:
         latency = (time.perf_counter() - t0) * 1e3
         gen_ids = out.sequences[0, n_prompt:]
         text = self.tok.decode(gen_ids, skip_special_tokens=True)
+        # latency_ms covers generate() only (GPU work + Python), not the processor.
         row = {"text": text, "prompt_tokens": n_prompt, "visual_tokens": n_vis, "latency_ms": latency}
         if s.is_mc:
             lp = torch.log_softmax(out.logits[0][0].float(), dim=-1)
