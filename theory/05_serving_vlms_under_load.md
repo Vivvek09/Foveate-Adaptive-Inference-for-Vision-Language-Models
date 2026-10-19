@@ -129,3 +129,39 @@ supports, including the honest case where escalation variance hurts p99.
 
 **Read next:** the vLLM paper (arXiv 2309.06180), sections 1 to 4; Sarathi-Serve
 (arXiv 2403.02310); DistServe (arXiv 2401.09670), especially its definition of goodput.
+
+---
+
+## 7. Measured results (serving run, Kaggle 2x T4, Oct 19 2026)
+
+From `results/serving/*.summary.json`: gateway + vLLM 0.32 (3B fp16 on GPU 0,
+7B-AWQ on GPU 1), the pilot's tuned cascade (τ = 0.981) against static 7b:16x448
+(the replay's reference). 200 seeded Poisson requests per run, 30% repeated clips,
+5 warm-up requests excluded; 200 of 200 succeeded in every run.
+
+| Rate | Policy | Throughput (req/s) | p50 (s) | p95 (s) | p99 (s) | ≤ 10 s | Accuracy | Escalated |
+|---|---|---|---|---|---|---|---|---|
+| 0.5 | cascade | 0.43 | 8.2 | 20.4 | 23.7 | 59% | 0.685 | 86.5% |
+| 0.5 | static 7b:16x448 | 0.43 | 16.5 | 30.5 | 33.9 | 28% | 0.685 | 0% |
+| 1 | cascade | 0.54 | 64.6 | 135.2 | 149.1 | 7% | 0.685 | 86.5% |
+| 1 | static 7b:16x448 | 0.42 | 86.9 | 245.9 | 257.3 | 4% | 0.685 | 0% |
+| 2 | cascade | 0.54 | 103.2 | 237.7 | 257.8 | 4% | 0.685 | 86.5% |
+| 2 | static 7b:16x448 | 0.42 | 134.6 | 344.4 | 365.7 | 1% | 0.685 | 0% |
+
+- **Section 3's prediction held, for a different reason than expected.** The cascade does
+  *more* total GPU work per request than the static 7B (note 03, section 8), yet it
+  halved p50 at 0.5 req/s and doubled goodput (share within 10 s: 59% vs 28%).
+- **Why (interpretation, consistent with the queueing model):** measured capacity is
+  ~0.42 req/s for static and ~0.54 req/s for the cascade (throughput when overloaded).
+  Static sends everything to GPU 1 and leaves GPU 0 idle; at the 0.46 req/s actually
+  offered it runs at ρ ≈ 1.1 and its queue grows. The cascade runs its 3B rungs on
+  GPU 0 and sends only 71% of requests to GPU 1 (ρ ≈ 0.86). Under load the busiest
+  GPU's utilisation is the cost that matters, not summed milliseconds.
+- **Saturation.** Two T4s serve about 0.4 to 0.5 req/s for 16-frame video questions.
+  At 1 and 2 req/s latency is almost all queueing (a single request on idle servers
+  took 3.1 to 3.7 s).
+- **The live path is slower than the grid.** One warm 7b:16x448 request took 1.6 s in
+  the grid but ~3.7 s through the gateway; video decode, JPEG + base64 transfer and
+  multimodal preprocessing are the likely extra costs (not separately measured).
+- **vLLM 0.32 needs `--trust-request-mm-kwargs`** for the gateway's per-request fps
+  (`media_io_kwargs`); without it every request fails with a 400.
