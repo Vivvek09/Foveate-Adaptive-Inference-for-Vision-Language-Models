@@ -16,6 +16,7 @@ import logging
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from . import config as C
@@ -159,11 +160,15 @@ def cmd_grid(args, cfg):
         except Exception as e:  # noqa: BLE001 - any vLLM start-up failure
             if args.backend == "vllm":
                 raise
+            from .utils import root_cause
+
             msg = f"{type(e).__name__}: {str(e).splitlines()[0][:300] if str(e) else ''}"
-            log.warning("vLLM unavailable (%s); falling back to the Transformers backend. Its rows "
-                        "are labelled backend=hf: accuracy is comparable, timings are not.", msg)
+            cause = root_cause(e)
+            log.warning("vLLM unavailable (%s; root cause %s); falling back to the Transformers "
+                        "backend. Its rows are labelled backend=hf: accuracy is comparable, "
+                        "timings are not.", msg, cause, exc_info=True)
             _log_event(rd, {"event": "vllm_fallback_to_hf", "model": args.model, "error": msg,
-                            "shard": args.shard})
+                            "root_cause": cause, "shard": args.shard})
             _free_gpu()
     if backend is None:
         if quant:
@@ -190,7 +195,7 @@ def cmd_grid(args, cfg):
 def _log_event(rd: Path, rec: dict) -> None:
     rd.mkdir(parents=True, exist_ok=True)
     with (rd / "events.jsonl").open("a") as f:
-        f.write(json.dumps(rec) + "\n")
+        f.write(json.dumps({"time": time.time(), **rec}) + "\n")
 
 
 def _free_gpu():

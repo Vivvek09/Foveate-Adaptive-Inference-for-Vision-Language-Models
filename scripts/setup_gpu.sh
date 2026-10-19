@@ -24,12 +24,50 @@ if [[ -n "${VLLM_SPEC}" ]]; then
   pip install -q "${VLLM_SPEC}" || echo "WARNING: vLLM install failed; grids with --backend auto fall back to Transformers (labelled backend=hf), serving is unavailable"
 fi
 pip install -q -e ".[data,hf,serve,dev]"
+
+# Dependency doctor. Kaggle images ship torchaudio/torchcodec/torchvision built for their own
+# torch; once vLLM swaps torch, those builds can fail to load. Foveate uses none of
+# torchaudio/torchcodec (frames go in as PIL images, no audio), but transformers imports
+# torchaudio at module level whenever it is installed, which breaks AutoProcessor with
+# "Could not import module 'AutoProcessor'". Test each in a fresh interpreter and repair.
+imports_ok() { python -c "import $1" >/tmp/foveate_import_$1.log 2>&1; }
+for mod in torchaudio torchcodec; do
+  if python -c "import importlib.util,sys; sys.exit(importlib.util.find_spec('$mod') is None)" && ! imports_ok "$mod"; then
+    echo "doctor: $mod is installed but does not import with this torch:"
+    tail -1 "/tmp/foveate_import_$mod.log"
+    echo "doctor: uninstalling $mod (unused by Foveate; transformers works without it)"
+    pip uninstall -y -q "$mod"
+  fi
+done
+if ! imports_ok torchvision; then
+  echo "doctor: torchvision does not import with this torch:"; tail -1 /tmp/foveate_import_torchvision.log
+  TV=$(python -c "import torch; v=torch.__version__.split('+')[0].split('.'); print(f'0.{int(v[1])+15}.*')")
+  CU=$(python -c "import torch; print('cu' + (torch.version.cuda or '').replace('.', ''))")
+  echo "doctor: installing torchvision==${TV} for ${CU}"
+  pip install -q --no-deps "torchvision==${TV}" --index-url "https://download.pytorch.org/whl/${CU}" \
+    || pip install -q --no-deps "torchvision==${TV}"
+fi
 python - <<'PY'
 import importlib, torch
 print("torch", torch.__version__, "cuda ok:", torch.cuda.is_available(),
       "gpus:", [torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count())])
-try:
-    v = importlib.import_module("vllm"); print("vllm", v.__version__)
-except Exception as e:
-    print("vllm not importable:", e)
+
+def root(e):
+    while (e.__cause__ or e.__context__) is not None:
+        e = e.__cause__ or e.__context__
+    return f"{type(e).__name__}: {str(e).strip().splitlines()[0] if str(e).strip() else ''}"
+
+ok = True
+for mod, names in [("transformers", ["AutoProcessor", "Qwen2_5_VLForConditionalGeneration"]),
+                   ("vllm", ["LLM", "SamplingParams"])]:
+    try:
+        m = importlib.import_module(mod)
+        for n in names:
+            getattr(m, n)
+        print(mod, m.__version__, "imports ok")
+    except Exception as e:
+        ok = False
+        print(f"ERROR: {mod} does not import: {root(e)}")
+if not ok:
+    print("The smoke test will fail until this import works; send this output.")
 PY
