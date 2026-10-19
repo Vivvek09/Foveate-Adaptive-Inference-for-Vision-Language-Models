@@ -28,7 +28,7 @@ def code(text: str) -> dict:
 def embedded_files() -> dict[str, str]:
     files = {}
     for pat in EMBED_GLOBS:
-        for p in sorted(ROOT.glob(pat)):
+        for p in sorted(ROOT.glob(pat), key=lambda q: q.relative_to(ROOT).as_posix()):
             if "__pycache__" in p.parts:
                 continue
             files[str(p.relative_to(ROOT))] = p.read_text()
