@@ -11,6 +11,12 @@ vLLM decodes without re-sampling), reads the option-letter log-probs, and
 escalates to the next rung when confidence is below tau. vLLM owns batching,
 KV-cache paging, prefix caching and the multimodal encoder cache.
 
+Routing is checked, not assumed: at start-up the gateway asks every backend
+which model it serves (/v1/models) and refuses to route to a mismatch. Ladder
+rungs whose model has no backend (e.g. a single-GPU box without the 7B server)
+are dropped with a logged reason, never silently replaced, and requests for a
+static policy on a missing model get HTTP 400.
+
 Run:  foveate serve --dataset mvbench --subset pilot --backends 3b=http://localhost:8001 \
           7b=http://localhost:8002 --policy-file results/mvbench_pilot/replay/policy.json
 """
@@ -74,7 +80,11 @@ class Gateway:
         self.samples = samples
         self.backends = backends
         self.model_ids = model_ids
-        self.ladder = ladder
+        self.dropped = [c.name for c in ladder if c.model not in backends]
+        if self.dropped:
+            log.warning("ladder rungs without a backend are dropped: %s", self.dropped)
+        self.ladder = [c for c in ladder if c.model in backends]
+        self.backend_status: dict[str, dict] = {}
         self.tau = tau
         self.telemetry = telemetry
         telemetry.parent.mkdir(parents=True, exist_ok=True)
@@ -84,6 +94,23 @@ class Gateway:
         self.client = httpx.AsyncClient(timeout=httpx.Timeout(600.0),
                                         limits=httpx.Limits(max_connections=512))
         self._tlock = asyncio.Lock()
+
+    async def check_backends(self) -> dict[str, dict]:
+        """Ask each backend what it serves; routing to a mismatched model is an error."""
+        for key, url in self.backends.items():
+            want = self.model_ids.get(key)
+            try:
+                r = await self.client.get(f"{url}/v1/models", timeout=10.0)
+                r.raise_for_status()
+                served = [m["id"] for m in r.json().get("data", [])]
+                ok = want in served
+                self.backend_status[key] = {"url": url, "served": served, "expected": want, "ok": ok}
+                if not ok:
+                    log.error("backend %s at %s serves %s, expected %s", key, url, served, want)
+            except Exception as e:  # noqa: BLE001
+                self.backend_status[key] = {"url": url, "expected": want, "ok": False,
+                                            "error": str(e)[:200]}
+        return self.backend_status
 
     async def _call(self, s: Sample, cfg: VisualConfig) -> dict:
         loop = asyncio.get_running_loop()
@@ -128,7 +155,8 @@ class Gateway:
                         if lp_first is None:
                             lp_first = item
         t_end = time.perf_counter()
-        out = {"config": cfg.name, "prep_ms": (t_prep - t0) * 1e3,
+        out = {"config": cfg.name, "backend_url": self.backends[cfg.model],
+               "prep_ms": (t_prep - t0) * 1e3,
                "ttft_ms": (ttft or (t_end - t_prep)) * 1e3, "backend_ms": (t_end - t_prep) * 1e3,
                "prompt_tokens": usage.get("prompt_tokens"), "text": text}
         if s.is_mc:
@@ -152,7 +180,10 @@ class Gateway:
         if policy == "cascade":
             rungs, thr = self.ladder, self.tau if tau is None else tau
         else:  # "static:3b:16x448"
-            rungs, thr = [VisualConfig.parse(policy.split(":", 1)[1])], -1.0
+            cfg = VisualConfig.parse(policy.split(":", 1)[1])
+            if cfg.model not in self.backends:
+                raise KeyError(f"no backend for model {cfg.model!r}")
+            rungs, thr = [cfg], -1.0
         calls = []
         for cfg in rungs:
             res = await self._call(s, cfg)
@@ -176,9 +207,16 @@ class Gateway:
 
 
 def build_app(gw: Gateway):
+    from contextlib import asynccontextmanager
+
     from fastapi import Body, FastAPI, HTTPException
 
-    app = FastAPI(title="foveate gateway")
+    @asynccontextmanager
+    async def lifespan(app):
+        await gw.check_backends()
+        yield
+
+    app = FastAPI(title="foveate gateway", lifespan=lifespan)
 
     @app.post("/ask")
     async def ask(
@@ -189,11 +227,16 @@ def build_app(gw: Gateway):
         """Answer one question; policy is "cascade" or "static:MODEL:FxR"."""
         if qid not in gw.samples:
             raise HTTPException(404, f"unknown qid {qid}")
-        return await gw.ask(qid, policy, tau)
+        try:
+            return await gw.ask(qid, policy, tau)
+        except KeyError as e:
+            raise HTTPException(400, str(e)) from e
 
     @app.get("/health")
     async def health():
-        return {"ok": True, "ladder": [c.name for c in gw.ladder], "tau": gw.tau,
+        ok = all(v.get("ok") for v in gw.backend_status.values()) if gw.backend_status else None
+        return {"ok": ok is not False, "backends": gw.backend_status, "routing_ok": ok,
+                "ladder": [c.name for c in gw.ladder], "dropped_rungs": gw.dropped, "tau": gw.tau,
                 "questions": len(gw.samples)}
 
     return app

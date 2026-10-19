@@ -50,7 +50,7 @@ def stream_experiment(
 
     cheap = ladder[0]
     feats = {}
-    for corr, tab in (("clean", clean), (corruption, shifted)):
+    for corr in ("clean", corruption):
         d = df[(df["corruption"] == corr) & (df["config"] == cheap)].set_index("qid")
         feats[corr] = d[STAT_COLS]
     X = np.stack([

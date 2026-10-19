@@ -2,14 +2,14 @@
 
 import json
 
-from fake_backend import FakeBackend
-
 from foveate.config import VisualConfig
 from foveate.data import load_samples
 from foveate.drift import shift_report
 from foveate.grid import run_dir, run_grid
 from foveate.policy import build_table, cascade, load_costs, load_rows, replay, static
 from foveate.report import build_report
+
+from fake_backend import FakeBackend
 
 
 def test_end_to_end(tmp_env):
@@ -42,7 +42,17 @@ def test_end_to_end(tmp_env):
     assert static(t, "7b:8x672")[0][0] == t.col("7b:8x672")
     rep = replay(t, ladder)
     names = [p["policy"] for p in rep["policies"]]
-    assert any(n.startswith("cascade") for n in names) and "oracle (upper bound)" in names
+    assert any(n.startswith("cascade") for n in names)
+    assert "oracle (upper bound, not deployable)" in names
+    assert "oracle (upper bound, not deployable)" not in rep["frontier"]
+    assert rep["baselines"] == {"fixed cheapest": "3b:2x224", "static intermediate": "3b:8x448",
+                                "fixed strongest": "7b:8x672"}
+    # The fake backend's timings are mocked, so costs must fall back to model FLOPs.
+    assert "TFLOPs" in rep["cost_metric"] and "mocked" in rep["cost_note"]
+    esc = rep["escalation"]["cascade"]
+    assert esc["helped"] + esc["hurt"] + esc["escalated_no_change_right"] \
+        + esc["escalated_no_change_wrong"] == esc["escalated"]
+    assert rep["verdicts"] and rep["curve_split"] == "held-out"
     out = rd / "replay"
     out.mkdir(parents=True, exist_ok=True)
     (out / "summary.json").write_text(json.dumps(rep))
@@ -50,5 +60,5 @@ def test_end_to_end(tmp_env):
     (out / "shift.json").write_text(json.dumps(srep))
     assert srep["per_corruption"][0]["corruption"] == "blur:4"
     md = build_report(tmp_env / "results").read_text()
-    assert "Stages 2-3" in md and "Stage 4" in md
+    assert "Stage 3: policies" in md and "Stage 4" in md and "MOCKED" in md
     assert list((tmp_env / "results" / "figures").glob("frontier_*.png"))

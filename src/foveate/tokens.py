@@ -96,23 +96,40 @@ class ModelShape:
     kv_heads: int
     head_dim: int
     weight_bytes: float  # bytes per weight as loaded (2 for fp16, ~0.55 for AWQ int4)
+    fp16_params: float = 0.0  # parameters an int4 checkpoint keeps in fp16 (embeddings, lm_head)
+    hidden: int = 2048
 
 
 MODEL_SHAPES = {
     "Qwen/Qwen2.5-VL-3B-Instruct": ModelShape(
-        "qwen2.5-vl-3b", 3.09e9, 0.67e9, 36, 2, 128, 2.0
+        "qwen2.5-vl-3b", 3.09e9, 0.67e9, 36, 2, 128, 2.0, hidden=2048
     ),
     "Qwen/Qwen2.5-VL-7B-Instruct": ModelShape(
-        "qwen2.5-vl-7b", 7.6e9, 0.67e9, 28, 4, 128, 2.0
+        "qwen2.5-vl-7b", 7.6e9, 0.67e9, 28, 4, 128, 2.0, hidden=3584
     ),
     "Qwen/Qwen2.5-VL-7B-Instruct-AWQ": ModelShape(
-        "qwen2.5-vl-7b-awq", 7.6e9, 0.67e9, 28, 4, 128, 0.55
+        "qwen2.5-vl-7b-awq", 7.6e9, 0.67e9, 28, 4, 128, 0.55,
+        fp16_params=1.09e9, hidden=3584,  # embed_tokens + untied lm_head stay fp16
     ),
 }
 
 
 def shape_for(model_id: str) -> ModelShape | None:
     return MODEL_SHAPES.get(model_id)
+
+
+def weight_bytes_total(shape: ModelShape, dtype_bytes: float = 2.0) -> float:
+    """Bytes the checkpoint occupies on the GPU: LLM (quantized part + fp16 part) + ViT.
+
+    dtype_bytes is the compute dtype (2 for fp16, 4 for fp32); it scales every
+    unquantized weight. AWQ keeps the ViT, embeddings and lm_head unquantized.
+    """
+    if shape.weight_bytes < 2.0:  # quantized checkpoint
+        llm = (shape.llm_params - shape.fp16_params) * shape.weight_bytes \
+            + shape.fp16_params * dtype_bytes
+    else:
+        llm = shape.llm_params * dtype_bytes
+    return llm + shape.vit_params * dtype_bytes
 
 
 def kv_bytes_per_token(shape: ModelShape, dtype_bytes: int = 2) -> int:

@@ -1,6 +1,10 @@
 from foveate.config import VisualConfig
 from foveate.tokens import (
-    MODEL_SHAPES, kv_bytes_per_token, smart_resize, target_size, visual_tokens,
+    MODEL_SHAPES,
+    kv_bytes_per_token,
+    smart_resize,
+    target_size,
+    visual_tokens,
 )
 
 

@@ -130,6 +130,38 @@ def default_dtype() -> str:
     return "float16"
 
 
+def gpu_capability() -> tuple[int, int] | None:
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return tuple(torch.cuda.get_device_capability(0))
+    except ImportError:
+        pass
+    return None
+
+
+def resolve_dtype(requested: str = "auto") -> str:
+    """The dtype to run in, never silently bf16 on a GPU that lacks it.
+
+    "auto" -> bfloat16 on compute capability >= 8.0 (Ampere+), float16 below
+    (T4 is 7.5). An explicit bfloat16 request on a pre-Ampere GPU is an error
+    rather than a silent emulation: T4 has no bf16 tensor cores.
+    """
+    aliases = {"half": "float16", "fp16": "float16", "bf16": "bfloat16", "fp32": "float32",
+               "float": "float32"}
+    req = aliases.get(requested, requested)
+    if req == "auto":
+        return default_dtype()
+    if req not in ("float16", "bfloat16", "float32"):
+        raise ValueError(f"unsupported dtype {requested!r}; use auto, float16, bfloat16 or float32")
+    cap = gpu_capability()
+    if req == "bfloat16" and cap is not None and cap[0] < 8:
+        raise ValueError(f"bfloat16 requested but this GPU has compute capability "
+                         f"{cap[0]}.{cap[1]} (T4 = 7.5) without bf16 support; use float16")
+    return req
+
+
 def percentile(values: list[float], q: float) -> float:
     import numpy as np
 
