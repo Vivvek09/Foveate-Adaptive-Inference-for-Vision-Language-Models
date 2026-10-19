@@ -22,7 +22,7 @@ import asyncio
 import json
 import random
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -56,6 +56,7 @@ async def run_trace(url: str, trace: list[dict], policy: str, out: Path, timeout
 
     results = []
     cold: list[float] = []
+    warm_errors: list[str] = []
     async with httpx.AsyncClient(timeout=timeout, limits=httpx.Limits(max_connections=1024)) as client:
         for qid in warmup or []:
             t = time.perf_counter()
@@ -63,8 +64,8 @@ async def run_trace(url: str, trace: list[dict], policy: str, out: Path, timeout
                 r = await client.post(f"{url}/ask", json={"qid": qid, "policy": policy})
                 r.raise_for_status()
                 cold.append((time.perf_counter() - t) * 1e3)
-            except Exception:  # noqa: BLE001 - reported via the count
-                pass
+            except Exception as e:  # noqa: BLE001 - reported via the count and first error
+                warm_errors.append(_err_text(e))
         t0 = time.perf_counter()
 
         async def one(item):
@@ -79,7 +80,7 @@ async def run_trace(url: str, trace: list[dict], policy: str, out: Path, timeout
                 rec["client_latency_ms"] = (time.perf_counter() - sent) * 1e3
                 rec["ok"] = True
             except Exception as e:  # keep going; failures are part of the result
-                rec = {"qid": item["qid"], "ok": False, "error": str(e)[:200],
+                rec = {"qid": item["qid"], "ok": False, "error": _err_text(e),
                        "client_latency_ms": (time.perf_counter() - sent) * 1e3}
             rec["sent_s"] = sent - t0
             results.append(rec)
@@ -93,11 +94,24 @@ async def run_trace(url: str, trace: list[dict], policy: str, out: Path, timeout
             f.write(json.dumps(r) + "\n")
     summ = summarize(results, wall, policy)
     summ.update({"warmup_requests": len(warmup or []), "warmup_ok": len(cold),
+                 "warmup_first_error": warm_errors[0] if warm_errors else None,
                  "cold_first_ms": cold[0] if cold else None,
                  "cold_p50_ms": float(np.median(cold)) if cold else None,
                  "trace_span_s": trace[-1]["t"] if trace else 0.0,
                  "offered_rps": len(trace) / trace[-1]["t"] if trace and trace[-1]["t"] else None})
     return summ
+
+
+def _err_text(e: Exception) -> str:
+    """The exception plus, for an HTTP error, the server's own explanation (the useful part)."""
+    msg = f"{type(e).__name__}: {e}"
+    resp = getattr(e, "response", None)
+    if resp is not None:
+        try:
+            msg += f" | body: {resp.text.strip()}"
+        except Exception:  # noqa: BLE001 - streaming or closed response
+            pass
+    return msg[:500]
 
 
 def summarize(results: list[dict], wall: float, policy: str) -> dict:
@@ -115,4 +129,5 @@ def summarize(results: list[dict], wall: float, policy: str) -> dict:
         "ttft_p50_ms": float(np.nanpercentile(ttft, 50)), "ttft_p95_ms": float(np.nanpercentile(ttft, 95)),
         "accuracy": float(np.mean(corr)) if corr else None,
         "escalation_rate": float(np.mean(esc)) if esc else None,
+        "top_errors": Counter(r.get("error") for r in results if not r.get("ok")).most_common(3),
     }

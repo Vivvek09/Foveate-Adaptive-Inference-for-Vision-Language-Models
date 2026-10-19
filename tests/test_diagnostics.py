@@ -62,3 +62,17 @@ def test_fallback_event_is_a_failure(tmp_path):
     ck3 = Checks()
     report_events(tmp_path, "3b", SimpleNamespace(backend="auto"), ck3, since=5.0)
     assert not ck3.items
+
+
+def test_report_lists_serving_errors(tmp_path):
+    from foveate.report import build_report
+    from foveate.serve.loadgen import summarize
+
+    rows = [{"qid": "q", "ok": False, "error": "HTTPStatusError: 502 | body: video_url unsupported",
+             "client_latency_ms": 1.0}] * 3
+    summ = summarize(rows, 1.0, "cascade") | {"backend": "vllm serve", "rate": 1.0}
+    assert summ["top_errors"][0][1] == 3
+    (tmp_path / "serving").mkdir()
+    (tmp_path / "serving" / "cascade_r1.0.summary.json").write_text(json.dumps(summ))
+    md = build_report(tmp_path).read_text()
+    assert "3/3 failed (3x)" in md and "video_url unsupported" in md

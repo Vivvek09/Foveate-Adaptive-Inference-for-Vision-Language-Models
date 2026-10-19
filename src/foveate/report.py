@@ -386,6 +386,16 @@ def build_report(results: Path) -> Path:
         md += [md_table(rows, ["run", "policy", "backend", "rate", "requests", "ok",
                                "throughput_rps", "p50_ms", "p95_ms", "p99_ms", "ttft_p50_ms",
                                "cold_p50_ms", "accuracy", "escalation_rate"]), ""]
+        failed = [r for r in rows if r.get("ok", 0) < r.get("requests", 0)]
+        if failed:
+            md += ["Failed requests (most common error per run; full records in "
+                   "`serving/*.jsonl`, server logs in `serving/vllm_*.log` and `gateway.log`):", ""]
+            for r in failed:
+                errs = r.get("top_errors") or [[r.get("warmup_first_error") or "not recorded", None]]
+                err, n = errs[0][0], errs[0][1]
+                md.append(f"- {r['run']}: {r['requests'] - r['ok']}/{r['requests']} failed"
+                          + (f" ({n}x)" if n else "") + f": `{str(err).replace('`', '')[:300]}`")
+            md.append("")
     out = results / "REPORT.md"
     out.write_text("\n".join(md))
     log.info("wrote %s", out)
