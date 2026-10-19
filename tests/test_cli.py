@@ -1,12 +1,13 @@
 import json
 
 import pytest
-from fake_backend import FakeBackend
 
 from foveate import cli
 from foveate.config import grid_configs, ladder, load_config
 from foveate.data import load_samples
 from foveate.grid import run_grid
+
+from fake_backend import FakeBackend
 
 
 def test_help_for_every_command(capsys):

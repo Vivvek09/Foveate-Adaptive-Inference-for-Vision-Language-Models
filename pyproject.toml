@@ -53,4 +53,8 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B"]
-ignore = ["B008", "B905", "E501"]  # FastAPI Body(...) defaults; long strings in notebook cells
+ignore = ["B008", "B905", "E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["foveate"]
+known-local-folder = ["fake_backend", "tiny_qwen"]  # FastAPI Body(...) defaults; long strings in notebook cells

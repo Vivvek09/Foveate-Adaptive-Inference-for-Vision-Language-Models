@@ -17,7 +17,7 @@ jobs:
       - name: Install (CPU only)
         run: |
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-          pip install -e ".[data,hf,serve,dev]"
+          pip install -e ".[data,hf,serve,dev]" "ruff==0.17.1"
       - name: Lint
         run: ruff check src tests tools
       - name: Notebook is built from this revision

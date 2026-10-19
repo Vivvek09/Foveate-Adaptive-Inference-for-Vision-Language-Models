@@ -2,14 +2,14 @@
 
 import json
 
-from fake_backend import FakeBackend
-
 from foveate.config import VisualConfig
 from foveate.data import load_samples
 from foveate.drift import shift_report
 from foveate.grid import run_dir, run_grid
 from foveate.policy import build_table, cascade, load_costs, load_rows, replay, static
 from foveate.report import build_report
+
+from fake_backend import FakeBackend
 
 
 def test_end_to_end(tmp_env):
