@@ -27,11 +27,17 @@ from .utils import capture_env, gpu_name, write_jsonl
 log = logging.getLogger(__name__)
 
 
-def _run_setting(backend, store, sample, n, res, out_tokens, warmup, repeats, extra) -> list[dict]:
+def _run_setting(backend, store, sample, n, res, out_tokens, warmup, repeats, extra,
+                 record_cold: bool = False) -> list[dict]:
     fb = store.load(sample, n, res, with_stats=False)
-    for _ in range(warmup):
-        backend.profile_one(sample, fb, out_tokens=out_tokens)
     rows = []
+    for w in range(warmup):
+        t = backend.profile_one(sample, fb, out_tokens=out_tokens)
+        if record_cold and w == 0:
+            # The very first request of the process: CUDA context already exists
+            # (model load), but kernels, cuBLAS heuristics and the allocator are cold.
+            rows.append({"frames": n, "res": res, "repeat": -1, "frame_hw": [fb.height, fb.width],
+                         "load_ms": fb.load_s * 1e3, **asdict(t), **extra, "sweep": "cold"})
     for r in range(repeats):
         fb = store.load(sample, n, res, with_stats=False)  # re-time the load as well
         t = backend.profile_one(sample, fb, out_tokens=out_tokens)
@@ -59,17 +65,25 @@ def run_profile(
     sample = samples[0]
     env = capture_env()
     rows: list[dict] = []
+    first = True
     for res in resolutions:
         for n in frames:
+            fit = _fit(model_id, n, res)
+            if fit is not None and not fit.ok:
+                log.warning("frames=%d res=%d skipped: %s", n, res, fit.reason)
+                rows.append({"frames": n, "res": res, "sweep": "visual", "skipped": fit.reason})
+                continue
             try:
-                rr = _run_setting(backend, store, sample, n, res, out_tokens, warmup, repeats,
-                                  {"sweep": "visual"})
+                rr = _run_setting(backend, store, sample, n, res, out_tokens, max(warmup, int(first)),
+                                  repeats, {"sweep": "visual"}, record_cold=first)
+                first = False
             except RuntimeError as e:  # most likely CUDA OOM at the largest settings
                 log.warning("frames=%d res=%d failed: %s", n, res, str(e).splitlines()[0])
                 _free_cuda()
                 rows.append({"frames": n, "res": res, "sweep": "visual", "error": str(e)[:200]})
                 continue
             rows.extend(rr)
+            rr = [x for x in rr if x["sweep"] == "visual"]
             med = np.median([x["gpu_total_ms"] for x in rr])
             log.info("frames=%2d res=%3d tokens=%5d  total %.0f ms (vision %.0f, prefill %.0f, "
                      "decode %.0f)", n, res, rr[0]["visual_tokens"], med,
@@ -78,7 +92,7 @@ def run_profile(
                      np.median([x["decode_ms"] for x in rr]))
     # Decode sweep at a mid-sized input.
     n_mid, r_mid = sorted(frames)[len(frames) // 2], sorted(resolutions)[len(resolutions) // 2]
-    for ot in decode_sweep:
+    for ot in decode_sweep or []:
         rows.extend(_run_setting(backend, store, sample, n_mid, r_mid, ot, warmup, repeats,
                                  {"sweep": "decode"}))
     for r in rows:
@@ -87,6 +101,16 @@ def run_profile(
     write_jsonl(out_path, rows)
     (out_path.with_suffix(".env.json")).write_text(__import__("json").dumps(env, indent=1))
     return rows
+
+
+def _fit(model_id: str, frames: int, res: int):
+    from .config import VisualConfig
+    from .memory import check_fit
+
+    try:
+        return check_fit(VisualConfig("", frames, res), model_id, backend="hf")
+    except Exception:  # noqa: BLE001 - the guard must never stop a profile
+        return None
 
 
 def _free_cuda():
@@ -106,7 +130,7 @@ def summarize(rows: list[dict], model_id: str, peak_tflops: float | None = None,
     """Median per setting, plus achieved TFLOP/s against the GPU's spec-sheet peak."""
     import pandas as pd
 
-    df = pd.DataFrame([r for r in rows if "error" not in r])
+    df = pd.DataFrame([r for r in rows if "error" not in r and "skipped" not in r])
     if df.empty:
         return []
     spec = gpu_spec(df["gpu"].iloc[0]) or {}

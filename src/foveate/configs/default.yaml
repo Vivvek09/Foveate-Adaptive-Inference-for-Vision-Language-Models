@@ -26,6 +26,21 @@ grid:
     3b: [2x224, 8x448]
     7b: [8x448]
 
+# Smoke mode: a first GPU integration check, not an experiment. A handful of
+# questions (round-robin over tasks) through one or two configs per model.
+smoke:
+  n: 8
+  configs:
+    mvbench:
+      3b: [4x224, 8x448]
+      7b: [8x448]
+    lingoqa:
+      3b: [2x224]
+      7b: [4x448]
+    synthetic:
+      3b: [2x224, 8x448]
+      7b: [8x448]
+
 # Escalation order for the cascade (stage 3). Each rung must be in the grid.
 ladder:
   mvbench: ["3b:4x224", "3b:8x448", "3b:16x448", "7b:16x448"]

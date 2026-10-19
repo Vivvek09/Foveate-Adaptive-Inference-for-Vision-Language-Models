@@ -30,4 +30,4 @@ def test_profile_and_predict(tmp_env):
     rows = run_profile(b, "tiny", [s], [2, 4], [224], 2, [1, 4], 1, 2,
                        tmp_env / "p.jsonl")
     summ = summarize(rows, "tiny")
-    assert {r["sweep"] for r in summ} == {"visual", "decode"}
+    assert {r["sweep"] for r in summ} == {"cold", "visual", "decode"}

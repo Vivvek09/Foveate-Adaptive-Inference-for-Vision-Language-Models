@@ -57,8 +57,12 @@ def model_quantization(cfg: dict, alias: str) -> str | None:
     return cfg["models"].get(alias, {}).get("quantization")
 
 
-def grid_configs(cfg: dict, dataset: str, model_alias: str) -> list[VisualConfig]:
-    specs = cfg["grid"][dataset][model_alias]
+def grid_configs(cfg: dict, dataset: str, model_alias: str, subset: str = "pilot") -> list[VisualConfig]:
+    """Configs for one model. Smoke mode uses the small `smoke.configs` list."""
+    if subset == "smoke":
+        specs = cfg["smoke"]["configs"][dataset].get(model_alias, [])
+    else:
+        specs = cfg["grid"][dataset].get(model_alias, [])
     return [VisualConfig.parse(s, default_model=model_alias) for s in specs]
 
 
