@@ -160,3 +160,13 @@ def test_gateway_reports_backend_rejection(tmp_env):
     r = httpx.post(f"http://127.0.0.1:{p_gw}/ask", json={"qid": samples[0].qid}, timeout=30)
     assert r.status_code == 502
     assert "vLLM returned 400" in r.text and "video metadata missing fps" in r.text
+
+
+def test_probe_reports_each_variant(tmp_env, capsys):
+    from foveate.serve.probe import main
+
+    p = _port()
+    _serve(fake_vllm(0.9), p)
+    main(["--url", f"http://127.0.0.1:{p}"])
+    out = capsys.readouterr().out
+    assert out.count("[200]") == 5 and "RESULT: every variant works" in out
