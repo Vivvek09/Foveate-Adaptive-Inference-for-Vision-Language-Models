@@ -149,3 +149,37 @@ from `results/REPORT.md`. If the cascade does *not* beat the best static config,
 so and use the confidence AUROC and oracle gap to explain why. That is also a result.
 
 **Read next:** FrugalGPT (arXiv 2305.05176); RouteLLM (arXiv 2406.18665); then note 04.
+
+---
+
+## 8. Measured results (pilot run, Kaggle 2x T4, Oct 19 2026)
+
+From `results/REPORT.md`, MVBench held-out half (567 questions). Reference = 7b:16x448
+(0.683, 1,625 ms batch-1). Ladder: 3b:4x224 → 3b:8x448 → 3b:16x448 → 7b:16x448.
+
+| Policy | Accuracy [95% CI] | Mean cost (ms) | vs reference: accuracy diff [95% CI] | Cost |
+|---|---|---|---|---|
+| static 3b:4x224 | 0.575 [0.536, 0.616] | 163 | −0.108 [−0.150, −0.062] | 0.10x |
+| static 3b:8x448 | 0.654 [0.615, 0.691] | 499 | −0.028 [−0.067, +0.011] | 0.31x |
+| static 7b:16x448 | 0.683 [0.644, 0.720] | 1,625 | 0 | 1.00x |
+| rules | 0.672 [0.633, 0.709] | 1,021 | −0.011 [−0.039, +0.019] | 0.63x |
+| cascade (τ = 0.981) | 0.688 [0.649, 0.725] | 2,809 | +0.005 [−0.002, +0.014] | 1.73x |
+| rules + cascade (τ = 0) | 0.672 | 1,021 | −0.011 | 0.63x |
+| oracle (not deployable) | 0.836 [0.804, 0.866] | 257 | +0.153 [+0.123, +0.183] | 0.16x |
+
+What happened against the predictions in this note:
+
+- **Rules won offline.** Learned mapping: count → 3b:16x448; detail and temporal →
+  3b:8x448; motion and other → 7b:16x448. Counting needed frames; motion needed the 7B.
+  The "detail needs pixels" hypothesis did not show: 672 px never beat 448 px.
+- **The cascade over-escalated** (528 of 567, 93%). Section 2's "even 94% escalation
+  still saves" assumed two rungs with c₁/c₂ ≈ 0.06. With four rungs, a fully escalated
+  question pays 163 + 499 + 1,042 + 1,625 = 3,329 ms, so the break-even escalation rate
+  is far lower. τ had to be 0.981 because the 7B is overconfident (note 02, section 8),
+  so the 3B may stop only when nearly certain. Escalation fixed 117 answers and broke 53.
+- **Ablations:** removing 3b:16x448 cost 0.2 points and 28% of cascade cost; removing
+  3b:4x224 cost nothing in accuracy. The ladder is too long.
+- **Oracle gap:** 0.836 at 257 ms vs rules at 0.672 and 1,021 ms. A better difficulty
+  signal has a lot of headroom.
+- **But see note 05, section 7:** under live load on two GPUs the same cascade halved
+  median latency versus the static 7B. Summed batch-1 milliseconds are not the whole cost.
