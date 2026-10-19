@@ -145,3 +145,33 @@ caching changes before shipping them.
 
 **Read next:** the MVBench paper (arXiv 2311.17005), section 3 on task construction;
 Guo et al. 2017, "On Calibration of Modern Neural Networks"; then note 03.
+
+---
+
+## 8. Measured results (pilot run, Kaggle 2x T4, Oct 19 2026)
+
+From `results/REPORT.md`: MVBench pilot, 1,135 questions over 19 tasks (14 skipped for
+missing media), split into 568 calibration and 567 held-out questions.
+
+- **Harness sanity check passes.** 3B at 16 × 448 scored 0.658 and 7B-AWQ at 16 × 448
+  scored 0.683 on the held-out half, close to the published 67.0 and 69.6 despite far
+  fewer frames. Section 1 predicted "5 to 10 points under"; the gap was smaller.
+- **Confidence quality, held-out half:**
+
+| Config | Accuracy | AUROC | ECE |
+|---|---|---|---|
+| 3b:4x224 | 0.575 | 0.707 | 0.074 |
+| 3b:8x448 | 0.654 | 0.785 | 0.049 |
+| 3b:16x448 | 0.658 | 0.798 | 0.063 |
+| 7b:8x448 | 0.654 | 0.715 | 0.225 |
+| 7b:16x448 | 0.683 | 0.725 | 0.197 |
+
+- **Section 3's prediction held for the 7B, not the 3B.** The 3B is well calibrated
+  (ECE 0.05 to 0.07) and ranks well (AUROC up to 0.80). The 7B-AWQ is overconfident
+  (ECE ~0.20) and ranks worse (0.72). Whether AWQ quantisation contributes was not tested.
+- **Precision.** With n = 567 held-out questions, 95% intervals are about ±4 points;
+  paired intervals on differences are about ±3 points (e.g. rules vs 7B: −1.1 [−3.9, +1.9]).
+- **Two costs disagree, as section 6 warned.** 3b:16x448 costs 1,042 ms batch-1 but
+  1,979 ms amortised per question in the batched grid; 7b:16x448 costs 1,625 vs 2,969 ms.
+- **LingoQA pilot** (150 questions, 75 held out) is too small: intervals are about ±11
+  points and no policy differs significantly from another.

@@ -110,3 +110,33 @@ These come straight out of the shift results:
 
 **Read next:** ImageNet-C (arXiv 1903.12261); Failing Loudly (arXiv 1810.11953);
 Ovadia et al. (arXiv 1906.02530); then note 05.
+
+---
+
+## 6. Measured results (pilot run, Kaggle 2x T4, Oct 19 2026)
+
+From `results/REPORT.md`, MVBench pilot, severity 3, τ fitted on clean data.
+
+| Corruption | Cascade acc (clean → shifted) | Escalation | Cheap-rung acc | Cheap-rung AUROC | Cost (ms) |
+|---|---|---|---|---|---|
+| blur | 0.671 → 0.609 | 0.928 → 0.970 | 0.556 → 0.496 | 0.714 → 0.656 | 2,429 → 2,628 |
+| night | 0.671 → 0.602 | 0.928 → 0.989 | 0.556 → 0.478 | 0.714 → 0.658 | 2,429 → 2,734 |
+| fog | 0.671 → 0.655 | 0.928 → 0.956 | 0.556 → 0.526 | 0.714 → 0.707 | 2,429 → 2,498 |
+
+Drift stream (clean, then shifted):
+
+| Corruption | Alarm delay | False alarms (clean) | Drift-aware vs plain cascade (shifted half) |
+|---|---|---|---|
+| night | 17 requests | 0 | cost 2,606 vs 2,749 ms (−5.2%), acc 0.595 vs 0.597 |
+| fog | 39 requests | 0 | cost 2,384 vs 2,484 ms (−4.0%), acc 0.653 vs 0.655 |
+| blur | never fired | 0 | identical (alarm never on) |
+
+- **Escalation rose under every corruption** (most under night), so confidence tracks
+  difficulty, and cost rose only on shifted inputs.
+- **Trap 3 confirmed:** the cheap rung's AUROC fell from 0.714 to ~0.66 under blur and
+  night, so the threshold picks worse questions to escalate exactly under shift.
+- **Escalation cannot undo a corrupted input:** the 7B sees the same frames, so cascade
+  accuracy still fell 6 to 7 points under blur and night.
+- **The free detector missed blur.** A likely reason (not tested): sharpness varies a lot
+  between clean MVBench clips, so the reference spread is wide. An embedding-based
+  detector is the upgrade.
