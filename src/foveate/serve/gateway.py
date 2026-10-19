@@ -63,6 +63,10 @@ def sampled_fps(fb: FrameBatch) -> float:
     return len(fb.frames) / dur if dur else 1.0
 
 
+class BackendError(RuntimeError):
+    """A vLLM backend rejected or failed a request."""
+
+
 class Gateway:
     def __init__(
         self,
@@ -136,7 +140,10 @@ class Gateway:
         text, lp_first, n_tok, usage = "", None, 0, {}
         async with self.client.stream("POST", f"{self.backends[cfg.model]}/v1/chat/completions",
                                       json=body) as r:
-            r.raise_for_status()
+            if r.status_code >= 400:
+                # vLLM explains a rejected request in the body; keep it instead of a bare status.
+                detail = (await r.aread()).decode(errors="replace")[:500]
+                raise BackendError(f"{cfg.name}: vLLM returned {r.status_code}: {detail}")
             async for line in r.aiter_lines():
                 if not line.startswith("data: ") or line.endswith("[DONE]"):
                     continue
@@ -231,6 +238,11 @@ def build_app(gw: Gateway):
             return await gw.ask(qid, policy, tau)
         except KeyError as e:
             raise HTTPException(400, str(e)) from e
+        except Exception as e:  # noqa: BLE001 - report the cause to the client, not a bare 500
+            log.exception("ask %s (%s) failed", qid, policy)
+            from ..utils import root_cause
+
+            raise HTTPException(502, f"{type(e).__name__}: {e} (root cause: {root_cause(e)})"[:800]) from e
 
     @app.get("/health")
     async def health():
