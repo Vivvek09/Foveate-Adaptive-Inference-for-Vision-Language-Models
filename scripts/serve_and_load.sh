@@ -20,7 +20,7 @@ export VLLM_SERVER_DEV_MODE=1   # enables /reset_prefix_cache between policies (
 CUDA_VISIBLE_DEVICES=0 nohup vllm serve Qwen/Qwen2.5-VL-3B-Instruct --port 8001 \
   --dtype half --max-model-len 8192 --gpu-memory-utilization 0.88 \
   --limit-mm-per-prompt '{"video": 1, "image": 0}' --mm-processor-kwargs "$MMKW" \
-  --enable-prefix-caching > "$RES/serving/vllm_3b.log" 2>&1 &
+  --enable-prefix-caching --trust-request-mm-kwargs > "$RES/serving/vllm_3b.log" 2>&1 &
 P1=$!
 P2=""
 PORTS="8001"
@@ -29,7 +29,7 @@ if [[ $SERVE_7B == 1 ]]; then
   CUDA_VISIBLE_DEVICES=1 nohup vllm serve Qwen/Qwen2.5-VL-7B-Instruct-AWQ --port 8002 \
     --dtype half --quantization awq --max-model-len 8192 --gpu-memory-utilization 0.88 \
     --limit-mm-per-prompt '{"video": 1, "image": 0}' --mm-processor-kwargs "$MMKW" \
-    --enable-prefix-caching > "$RES/serving/vllm_7b.log" 2>&1 &
+    --enable-prefix-caching --trust-request-mm-kwargs > "$RES/serving/vllm_7b.log" 2>&1 &
   P2=$!
   PORTS="8001 8002"
   BACKENDS="$BACKENDS 7b=http://localhost:8002"
