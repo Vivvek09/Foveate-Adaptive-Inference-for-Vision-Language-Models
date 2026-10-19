@@ -4,9 +4,12 @@ import math
 
 from foveate.data import stable_hash
 from foveate.prompts import mc_summary, option_letters, softmax_over_options
+from foveate.tokens import visual_tokens
 
 
 class FakeBackend:
+    kind = "fake"  # mocked: its timings must never be reported as GPU results
+
     def __init__(self, skill: float = 1.0):
         self.skill = skill
 
@@ -21,7 +24,8 @@ class FakeBackend:
         lp = {L: -3.0 for L in letters}
         lp[s.answer if right else next(L for L in letters if L != s.answer)] = -3.0 + 4 * abs(capacity - difficulty) + 0.2
         row = mc_summary(softmax_over_options(lp, letters))
-        row.update({"text": row["pred"], "prompt_tokens": int(tokens) + 40, "visual_tokens": int(tokens)})
+        vt = visual_tokens(fb.height, fb.width, len(fb.frames))
+        row.update({"text": row["pred"], "prompt_tokens": vt + 40, "visual_tokens": vt})
         return row
 
     def predict_batch(self, samples, batches, max_new_tokens=48):

@@ -1,0 +1,11 @@
+# GPU box (Kaggle T4 x2 or similar). Installed by scripts/setup_gpu.sh, which picks
+# the vLLM build from the CUDA version the NVIDIA driver supports:
+#   driver CUDA >= 13.0  -> vllm==0.32.0  (the API this code was written against)
+#   driver CUDA >= 12.8  -> vllm==0.11.0
+#   otherwise            -> vllm==0.9.2
+# Override: VLLM_OVERRIDE="vllm==X.Y.Z" bash scripts/setup_gpu.sh
+# vLLM pins its own torch/CUDA build, so it is installed before Foveate.
+# None of these combinations has been run on a GPU by the authors yet: the
+# exact versions of a working run are recorded by `foveate env` and in every
+# results/*/cost/*.json ("env"), and should be copied here once measured.
+-e .[data,hf,serve,dev]

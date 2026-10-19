@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="430" viewBox="0 0 960 430" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif">
+  <rect width="960" height="430" fill="#ffffff"/>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#52514e"/>
+    </marker>
+  </defs>
+  <text x="24" y="34" font-size="20" font-weight="600" fill="#0b0b0b">Foveate: Profile → Benchmark → Optimize → Shift evaluation → Serve</text>
+  <text x="24" y="56" font-size="13" fill="#52514e">Every stage writes plain JSON/JSONL; later stages read earlier outputs. GPU stages: 1, 2, 4 (grid), 5. CPU stages: 3, 4 (replay).</text>
+
+  <!-- stage boxes -->
+  <g font-size="13">
+    <rect x="24" y="84" width="168" height="132" rx="10" fill="#eaf2fc" stroke="#2a78d6"/>
+    <text x="38" y="108" font-weight="600" fill="#0b0b0b">1 · Profile</text>
+    <text x="38" y="130" fill="#0b0b0b">Transformers, batch 1</text>
+    <text x="38" y="149" fill="#0b0b0b">CUDA events around</text>
+    <text x="38" y="168" fill="#0b0b0b">ViT · prefill · decode</text>
+    <text x="38" y="196" fill="#52514e" font-size="12">profile/*.summary.json</text>
+
+    <rect x="210" y="84" width="168" height="132" rx="10" fill="#eaf2fc" stroke="#2a78d6"/>
+    <text x="224" y="108" font-weight="600" fill="#0b0b0b">2 · Benchmark</text>
+    <text x="224" y="130" fill="#0b0b0b">vLLM offline engine</text>
+    <text x="224" y="149" fill="#0b0b0b">every question ×</text>
+    <text x="224" y="168" fill="#0b0b0b">frames × res × model</text>
+    <text x="224" y="196" fill="#52514e" font-size="12">grid/*.jsonl, cost/*.json</text>
+
+    <rect x="396" y="84" width="168" height="132" rx="10" fill="#e8f7f0" stroke="#1baf7a"/>
+    <text x="410" y="108" font-weight="600" fill="#0b0b0b">3 · Optimize</text>
+    <text x="410" y="130" fill="#0b0b0b">replay policies (CPU)</text>
+    <text x="410" y="149" fill="#0b0b0b">fit on calib half,</text>
+    <text x="410" y="168" fill="#0b0b0b">score on held-out half</text>
+    <text x="410" y="196" fill="#52514e" font-size="12">replay/summary.json</text>
+
+    <rect x="582" y="84" width="168" height="132" rx="10" fill="#fdf0e9" stroke="#eb6834"/>
+    <text x="596" y="108" font-weight="600" fill="#0b0b0b">4 · Shift evaluation</text>
+    <text x="596" y="130" fill="#0b0b0b">fog · night · blur</text>
+    <text x="596" y="149" fill="#0b0b0b">escalation vs drift,</text>
+    <text x="596" y="168" fill="#0b0b0b">image-stat detector</text>
+    <text x="596" y="196" fill="#52514e" font-size="12">replay/shift.json</text>
+
+    <rect x="768" y="84" width="168" height="132" rx="10" fill="#f3f0fc" stroke="#6250d6"/>
+    <text x="782" y="108" font-weight="600" fill="#0b0b0b">5 · Serve</text>
+    <text x="782" y="130" fill="#0b0b0b">gateway + vllm serve</text>
+    <text x="782" y="149" fill="#0b0b0b">Poisson open loop</text>
+    <text x="782" y="168" fill="#0b0b0b">p50 / p95 / p99</text>
+    <text x="782" y="196" fill="#52514e" font-size="12">serving/*.summary.json</text>
+  </g>
+  <g stroke="#52514e" stroke-width="1.5" marker-end="url(#a)">
+    <line x1="192" y1="150" x2="208" y2="150"/>
+    <line x1="378" y1="150" x2="394" y2="150"/>
+    <line x1="564" y1="150" x2="580" y2="150"/>
+    <line x1="750" y1="150" x2="766" y2="150"/>
+  </g>
+
+  <!-- serving detail -->
+  <text x="24" y="262" font-size="15" font-weight="600" fill="#0b0b0b">Stage 5 on Kaggle T4 x2: one model per GPU, nothing shared</text>
+  <g font-size="13">
+    <rect x="24" y="280" width="150" height="56" rx="8" fill="#f6f6f3" stroke="#bdbcb6"/>
+    <text x="40" y="304" fill="#0b0b0b">load generator</text>
+    <text x="40" y="323" fill="#52514e" font-size="12">same seeded trace</text>
+
+    <rect x="234" y="270" width="250" height="140" rx="8" fill="#f3f0fc" stroke="#6250d6"/>
+    <text x="250" y="294" font-weight="600" fill="#0b0b0b">Foveate gateway (:8000)</text>
+    <text x="250" y="316" fill="#0b0b0b">sample + resize frames</text>
+    <text x="250" y="335" fill="#0b0b0b">ask cheapest rung first</text>
+    <text x="250" y="354" fill="#0b0b0b">option-letter confidence ≥ τ ?</text>
+    <text x="250" y="373" fill="#0b0b0b">  yes → answer · no → next rung</text>
+    <text x="250" y="396" fill="#52514e" font-size="12">telemetry.jsonl (every rung, every ms)</text>
+
+    <rect x="560" y="276" width="376" height="58" rx="8" fill="#eaf2fc" stroke="#2a78d6"/>
+    <text x="576" y="300" fill="#0b0b0b">GPU 0 · vllm serve Qwen2.5-VL-3B-Instruct (fp16) :8001</text>
+    <text x="576" y="320" fill="#52514e" font-size="12">rungs 3b:4x224 → 3b:8x448 → 3b:16x448</text>
+
+    <rect x="560" y="346" width="376" height="58" rx="8" fill="#fdf0e9" stroke="#eb6834"/>
+    <text x="576" y="370" fill="#0b0b0b">GPU 1 · vllm serve Qwen2.5-VL-7B-Instruct-AWQ :8002</text>
+    <text x="576" y="390" fill="#52514e" font-size="12">top rung 7b:16x448 (int4 weights, fp16 compute)</text>
+  </g>
+  <g stroke="#52514e" stroke-width="1.5" marker-end="url(#a)" fill="none">
+    <line x1="174" y1="308" x2="232" y2="308"/>
+    <path d="M484,310 L558,305"/>
+    <path d="M484,360 L558,375"/>
+  </g>
+</svg>

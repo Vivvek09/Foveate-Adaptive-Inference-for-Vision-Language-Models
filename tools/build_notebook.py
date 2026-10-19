@@ -11,8 +11,9 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EMBED_GLOBS = ["pyproject.toml", "README.md", "LICENSE", "src/foveate/**/*.py",
-               "src/foveate/configs/*.yaml", "scripts/*.sh", "theory/*.md"]
+EMBED_GLOBS = ["pyproject.toml", "README.md", "LICENSE", "requirements-gpu.txt",
+               "src/foveate/**/*.py", "src/foveate/configs/*.yaml", "scripts/*.sh", "theory/*.md",
+               "docs/*.md"]
 
 
 def md(text: str) -> dict:
@@ -38,31 +39,38 @@ def build() -> dict:
     files = embedded_files()
     cells = [
         md("""
-# Foveate on Kaggle: profile VLM inference, then spend compute only where it is needed
+# Foveate: Adaptive Inference for Vision-Language Models (Kaggle T4 x2)
 
 **Before you run:** *Settings → Accelerator → GPU T4 x2* and *Settings → Internet → On*.
 Then set `MODE` below and use *Run All*. Results land in `/kaggle/working/foveate_results`
 (kept after the session ends) and are zipped at the end for download.
 
-| Stage | What it does | Theory |
-|---|---|---|
-| 1 profile | where batch-1 latency goes (decode, ViT, prefill, decode) | `theory/01` |
-| 2 grid | every question × every frames/resolution/model config, cached | `theory/02` |
-| 3 replay | static vs rules vs cascade vs oracle, held-out | `theory/03` |
-| 4 shift | fog/night/blur: does the cascade spend more on harder inputs? | `theory/04` |
-| 5 serve | vLLM (3B on GPU0, 7B-AWQ on GPU1) + gateway under Poisson load | `theory/05` |
+| Stage | Command | What it does | Theory |
+|---|---|---|---|
+| 1 Profile | `profile` | where batch-1 latency goes (load, ViT, prefill, decode), CUDA events | `theory/01` |
+| 2 Benchmark | `grid` | every question × every frames/resolution/model config, cached | `theory/02` |
+| 3 Optimize | `replay` | baselines vs rules vs cascade vs oracle, on a held-out half | `theory/03` |
+| 4 Shift evaluation | `shift` + `replay` | fog/night/blur: does the cascade spend more on harder inputs? | `theory/04` |
+| 5 Serve | `serve` + `loadtest` | vLLM (3B on GPU0, 7B-AWQ on GPU1) + gateway under Poisson load | `theory/05` |
 
-`MODE = "pilot"` runs a fixed-seed 30% of the questions (stratified by task, same
-questions every time). `MODE = "full"` runs everything. Every GPU step is resumable:
-if the session dies, re-run the notebook and finished questions are skipped (as long
-as `/kaggle/working/foveate_results` was kept, e.g. via *Save Version*).
+Three modes (see `docs/MODES.md` for the exact outputs of each):
+
+* `MODE = "smoke"`: run this first. 8 generated questions through 1-2 configs per model, every
+  link checked (model load, video decode, preprocessing, inference, metrics, storage). Writes
+  `smoke/SMOKE.md` with PASS/WARN/FAIL per check and stops.
+* `MODE = "pilot"`: a fixed-seed 30% of the questions (stratified by task, same questions every time).
+* `MODE = "full"`: everything. Every GPU step is resumable: if the session dies, re-run the notebook
+  and finished questions are skipped (as long as `/kaggle/working/foveate_results` was kept, e.g.
+  via *Save Version*).
+
+No runtime is promised here: the first smoke run is what measures it on your session.
 """),
         code("""
 # ---- settings -------------------------------------------------------------
-MODE = "pilot"          # "pilot" (fixed 30%) or "full"
+MODE = "smoke"          # "smoke" (first GPU check), "pilot" (fixed 30%) or "full"
 TASKS = "auto"          # "all", "lite" (skips the 11 GB Perception zip), or "auto" (lite if disk < 45 GB free)
 RUN_PROFILE = True
-RUN_7B = True           # the escalation model (needs vLLM)
+RUN_7B = True           # the escalation model (7B-AWQ, needs vLLM, runs on GPU 1)
 RUN_SHIFT = True        # stage 4; the longest step in full mode
 RUN_LINGOQA = True      # driving demo (Google Drive download; skipped on failure)
 RUN_SERVING = True      # stage 5
@@ -79,7 +87,8 @@ if TASKS == "auto":
     TASKS = "all" if free_gb > 45 else "lite"
 if GPUS is None:
     GPUS = max(1, len(subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True).stdout.strip().splitlines()))
-print(f"MODE={MODE} TASKS={TASKS} GPUS={GPUS} free disk in /tmp: {free_gb:.0f} GB")
+MODELS = "3b 7b" if RUN_7B else "3b"
+print(f"MODE={MODE} TASKS={TASKS} GPUS={GPUS} MODELS={MODELS} free disk in /tmp: {free_gb:.0f} GB")
 """),
         code("""
 # Optional: a Hugging Face token from Kaggle secrets (Add-ons -> Secrets, name HF_TOKEN)
@@ -113,8 +122,25 @@ for m in ["Qwen/Qwen2.5-VL-3B-Instruct"] + (["Qwen/Qwen2.5-VL-7B-Instruct-AWQ"] 
     snapshot_download(m)
 print("weights cached")
 """),
-        md("## Smoke test\n24 generated questions through the 3B model on one GPU. If this fails, fix it before the long runs (see README > Troubleshooting). The log line `first-batch accuracy` should be well above chance."),
-        code("!foveate grid --dataset synthetic --full --model 3b --probe 2"),
+        md("""
+## Smoke test (always runs first)
+
+`foveate smoke` runs 8 generated questions (encoded as real MP4s, so PyAV decoding is exercised)
+through the smoke configs, 3B on GPU 0 and 7B-AWQ on GPU 1, each in its own process, and checks
+every stage. It also times one CUDA-event profile setting. If anything FAILs, the notebook stops
+here: read `smoke/SMOKE.md` and the per-model logs next to it.
+"""),
+        code("""
+r = subprocess.run(["foveate", "smoke", "--models", *MODELS.split(), "--profile"])
+R = os.environ["FOVEATE_RESULTS"]
+from IPython.display import Markdown, display
+display(Markdown(open(f"{R}/smoke/SMOKE.md").read()))
+if r.returncode != 0:
+    raise SystemExit("smoke test failed: fix this before the long runs (see the table above)")
+if MODE == "smoke":
+    subprocess.run(["foveate", "report"])
+    print("smoke mode: done. Set MODE = 'pilot' and run again for the experiments.")
+"""),
         md("""
 ## 1 · Profile: where does the time go?
 
@@ -123,6 +149,8 @@ step, over frames × resolution on synthetic frames (compute does not depend on 
 content). Read `theory/01_anatomy_of_vlm_inference.md` alongside.
 """),
         code("""
+if MODE == "smoke":
+    raise SystemExit("MODE='smoke' stops after the smoke test (this is expected)")
 if RUN_PROFILE:
     !foveate profile --model 3b --source synthetic
 """),
@@ -153,7 +181,10 @@ if RUN_SHIFT:
 !foveate replay --dataset mvbench --{MODE} --tasks {TASKS}
 rep = json.load(open(f"{R}/mvbench_{MODE}/replay/summary.json"))
 print("reference:", rep["reference"], "| ladder:", " -> ".join(rep["ladder"]), "| tau:", round(rep["tau"], 3))
-display(pd.DataFrame(rep["policies"])[["policy","accuracy","acc_lo","acc_hi","mean_cost","cost_saving","acc_diff","acc_diff_lo","acc_diff_hi","escalation_rate"]].round(3))
+print("cost metric:", rep["cost_metric"], rep.get("cost_note") or "")
+display(pd.DataFrame(rep["policies"])[["policy","baseline","accuracy","acc_lo","acc_hi","mean_cost","cost_saving","acc_diff","acc_diff_lo","acc_diff_hi","escalation_rate"]].round(3))
+print("\\n".join(rep["verdicts"]))
+display(pd.DataFrame([{k: v for k, v in e.items() if not k.startswith("examples")} | {"policy": k2} for k2, e in rep["escalation"].items()]).round(3))
 display(pd.DataFrame(rep["confidence"]).round(3))
 """),
         md("## Driving demo · LingoQA\n500 driving-scene questions with free-form answers scored by Lingo-Judge. Google Drive sometimes rate-limits the download; the notebook skips this part if it fails."),
@@ -173,6 +204,7 @@ if RUN_LINGOQA:
         code("""
 if RUN_SERVING:
     os.environ["MODE"], os.environ["TASKS"] = MODE, TASKS
+    os.environ["SERVE_7B"] = "1" if RUN_7B else "0"
     !bash scripts/serve_and_load.sh
 """),
         md("## Report"),

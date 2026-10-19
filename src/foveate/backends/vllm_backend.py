@@ -27,6 +27,8 @@ log = logging.getLogger(__name__)
 
 
 class VLLMBackend:
+    kind = "vllm"
+
     def __init__(
         self,
         model_id: str,
@@ -44,12 +46,15 @@ class VLLMBackend:
         from transformers import AutoProcessor
         from vllm import LLM
 
-        from ..utils import default_dtype
+        from ..utils import resolve_dtype
 
+        t_load = time.perf_counter()
         self.model_id = model_id
-        dtype = default_dtype() if dtype == "auto" else dtype
-        if quantization == "awq" and dtype == "bfloat16":
-            dtype = "float16"  # AWQ kernels run in fp16
+        dtype = resolve_dtype(dtype)  # fp16 on T4; explicit bf16 on T4 raises
+        if quantization == "awq" and dtype != "float16":
+            # AWQ kernels compute in fp16; say so instead of silently changing it.
+            log.warning("AWQ runs in float16; overriding requested dtype %s", dtype)
+            dtype = "float16"
         self.processor = AutoProcessor.from_pretrained(model_id)
         self.tok = self.processor.tokenizer
         kwargs = dict(
@@ -72,6 +77,8 @@ class VLLMBackend:
         log.info("starting vLLM: %s", {k: v for k, v in kwargs.items() if k != "model"})
         self.llm = LLM(**kwargs)
         self.dtype = dtype
+        self.quantization = quantization
+        self.engine_kwargs = {k: v for k, v in kwargs.items() if k != "model"}
         self.video_metadata = True  # flips off automatically on older vLLM
         self.letter_ids = {}
         for L in "ABCDEFGH":
@@ -87,6 +94,19 @@ class VLLMBackend:
             "logprob_token_ids" in inspect.signature(SamplingParams.__init__).parameters
             or "logprob_token_ids" in getattr(SamplingParams, "__struct_fields__", ())
         )
+        self.load_s = time.perf_counter() - t_load  # cold start: weights + profiling + graphs
+
+    def info(self) -> dict:
+        import os
+
+        import vllm
+
+        return {"kind": self.kind, "model_id": self.model_id, "dtype": self.dtype,
+                "quantization": self.quantization, "vllm": vllm.__version__,
+                "attention_backend_env": os.environ.get("VLLM_ATTENTION_BACKEND"),
+                "video_input": "frames+metadata" if self.video_metadata else "frames only",
+                "mc_logprobs": "exact option ids" if self._has_token_id_logprobs else "top-20",
+                "load_s": self.load_s, **self.engine_kwargs}
 
     def _prompt(self, s: Sample, fb: FrameBatch) -> dict:
         text = self.processor.apply_chat_template(

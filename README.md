@@ -1,141 +1,171 @@
-# Foveate
+# Foveate: Adaptive Inference for Vision-Language Models
 
-**Spend visual compute only where the question needs it.**
+**An open-source framework for profiling, benchmarking, and adaptive inference of vision-language models.**
 
-Your eye's fovea sees sharply only where you look, and your brain moves it only when
-something needs a closer look. Foveate does the same for vision-language models: it
-answers every video question cheaply first (few frames, low resolution, small model)
-and escalates to more frames, more pixels or a bigger model only when the cheap
-answer looks unsure. It also measures where VLM inference time actually goes, so
-every decision rests on profiler numbers rather than guesses.
+[![ci](https://github.com/Vivvek09/Foveate-Adaptive-Inference-for-Vision-Language-Models/actions/workflows/ci.yml/badge.svg)](https://github.com/Vivvek09/Foveate-Adaptive-Inference-for-Vision-Language-Models/actions/workflows/ci.yml)
 
+**What it does.** Foveate measures where a video VLM's inference time goes (frame decoding,
+vision encoder, prefill, decode). It then runs every benchmark question through a grid of
+compute settings: frames × resolution × model size. Finally it tests whether a policy that
+answers cheaply first and escalates only when unsure can match a fixed expensive setting at
+lower cost, on held-out questions and on a real vLLM serving stack under load.
+
+**The problem.** A video VLM's cost is dominated by visual tokens:
+`ceil(frames/2) × (res/28)²` for Qwen2.5-VL. Most deployments pick one setting for every
+request. Easy questions then pay for pixels they don't need, and hard ones may still not get
+enough. Foveate is a harness for *investigating* adaptive compute allocation and
+quality-aware inference. It doesn't claim to have solved them: whether a cascade wins
+depends on how well the model's confidence separates its right answers from its wrong ones,
+and the report says so either way.
+
+![Foveate architecture](docs/architecture.svg)
+
+**Core capabilities**
+
+1. **Stage-level profiler.** CUDA events bracket the vision encoder, prefill and each
+   decode step in Transformers. It reports warm medians and p95, a separate cold first
+   call, achieved TFLOP/s and MFU against the GPU's spec sheet.
+2. **Cached quality grid on vLLM.** Every question runs through every (frames, res, model)
+   config once. Answers are scored from option-letter log-probs, with confidence, margin
+   and entropy stored per row. Runs are sharded across GPUs and resumable.
+3. **Policy replay with honest baselines.** Fixed cheapest, static intermediate and fixed
+   strongest are compared with learned rules, a confidence cascade, rules+cascade, and an
+   oracle that is labelled non-deployable. τ and the rules are fit on a calibration half
+   and scored on a held-out half with paired bootstrap CIs. The escalation report counts
+   what escalation fixed, what it broke, and the overconfident failures.
+4. **Distribution-shift study.** Fog, night and blur corruptions test whether the cascade
+   spends more on harder inputs, and whether a model-free image-statistics drift detector
+   helps.
+5. **Policy-aware serving.** A FastAPI gateway sits in front of one `vllm serve` per GPU
+   (3B on GPU 0, 7B-AWQ on GPU 1). It verifies its routing, and open-loop Poisson load
+   tests with identical seeded traces per policy report p50/p95/p99 latency and
+   throughput.
+
+**Quick start** (any CUDA box; on Kaggle use the notebook below)
+
+```bash
+git clone https://github.com/Vivvek09/Foveate-Adaptive-Inference-for-Vision-Language-Models foveate
+cd foveate
+bash scripts/setup_gpu.sh            # vLLM build matched to the driver, then foveate
+foveate smoke --models 3b 7b --profile   # 8 generated questions; every stage checked
+cat results/smoke/SMOKE.md           # PASS / WARN / FAIL per check
 ```
-            ┌──────────── Stage 1: profile ────────────┐
- question   │ load │ preprocess │ ViT │ prefill │ decode │  where does the time go?
- + video ──►└───────────────────────────────────────────┘
-            Stage 2: grid    every question × every (frames, resolution, model) config, cached
-            Stage 3: policy  static vs rules vs confidence cascade vs oracle, held-out evaluation
-            Stage 4: shift   fog / night / blur: does the cascade spend more where inputs get harder?
-            Stage 5: serve   gateway + vLLM (one model per GPU) under Poisson load: p50/p95/p99
-```
 
-| | |
-|---|---|
-| Models | Qwen2.5-VL-3B-Instruct (cheap), Qwen2.5-VL-7B-Instruct-AWQ (escalation) |
-| Main benchmark | **MVBench**: 19 temporal tasks, 3,800 multiple-choice questions (published Qwen2.5-VL scores: 3B 67.0, 7B 69.6) |
-| Driving demo | **LingoQA** evaluation set: 500 driving-scene questions, scored with Lingo-Judge |
-| Target hardware | Kaggle **2× T4** (16 GB each, fp16). Any CUDA GPU works. |
-| Engines | vLLM for throughput and serving; Hugging Face Transformers for per-stage timing |
+**Results.** None yet. No GPU run has been made: this release was built and tested on CPU
+only (see [What is verified](#what-is-verified)). Every table and figure in
+`results/REPORT.md` is generated by `foveate report` from result files, and rows from the
+test stand-in model are marked MOCKED. Results appear here once a smoke and pilot run has
+happened on a GPU.
 
-**Why MVBench:** it is in the video table of almost every recent VLM paper, so your
-harness can be checked against a published number, and each answer is a single
-option letter, so a full pass over one config takes minutes. See
-[theory/02](theory/02_benchmarks_confidence_and_statistics.md).
+**Current limitations.** The vLLM path, the gateway against real vLLM, and both real
+checkpoints have not run on a GPU yet. MVBench accuracy at 4–16 frames will sit below
+Qwen's published 67.0 / 69.6, which used far more frames. Cascade costs in stage 3 are
+sums of measured per-config latencies, while stage 5 measures the real thing. Synthetic
+corruptions are a robustness probe, not evidence about real driving. This is a research
+harness, not a production system.
 
 ---
+
+## PyTorchCon 2026: the 30-second version
+
+> Video VLMs spend most of their compute on visual tokens, and the token count is set by
+> two knobs, frames and resolution, plus the model size. Foveate profiles Qwen2.5-VL on
+> T4s with CUDA events to show where the milliseconds go. It caches every MVBench question
+> under a grid of those knobs in vLLM, then replays policies offline: fixed configs, rules,
+> and a confidence cascade that starts at 4 frames at 224 px on the 3B model and escalates
+> up to 16 frames on the 7B model only when the option-letter probability is low. The
+> threshold is fit on one half of the questions and reported on the other, with paired
+> bootstrap CIs, an explicit count of answers that escalation broke, and a non-deployable
+> oracle as the ceiling. Then it serves the same policy behind a gateway in front of two
+> vLLM servers, one per GPU, under Poisson load. The open question I'm testing is whether
+> VLM confidence is calibrated enough for this to beat a well-chosen static config once you
+> count the cost of the failed cheap attempts.
+
+More talking points and likely questions: [docs/PYTORCHCON.md](docs/PYTORCHCON.md).
+
+## Experiments
+
+| # | Experiment | Stage | What is measured | Status |
+|---|---|---|---|---|
+| E0 | Smoke test | all | model load, video decode, token count = formula, finite letter probs, storage, one profile setting | ready, not yet run on GPU |
+| E1 | Latency anatomy | 1 Profile | load / preprocess / ViT / prefill / decode vs frames × res (1–16 × 224–896), decode sweep, cold vs warm | ready, not yet run |
+| E2 | Quality grid | 2 Benchmark | MVBench (19 tasks) accuracy, confidence and latency for 7 × 3B and 2 × 7B-AWQ configs | ready, not yet run |
+| E3 | Adaptive policies | 3 Optimize | held-out accuracy vs cost for 3 baselines, rules, cascade, rules+cascade, oracle; escalation helped / hurt / overconfident | ready, not yet run |
+| E4 | Shift | 4 Shift | fog / night / blur escalation rate and accuracy; drift-alarm delay; drift-aware start rung | ready, not yet run |
+| E5 | Serving | 5 Serve | cascade vs best static config under the same Poisson traces at 0.5 / 1 / 2 req/s: p50/p95/p99, throughput | ready, not yet run |
+| E6 | Driving demo | 2–3 | LingoQA (free-form, Lingo-Judge) through the same pipeline | ready, download can be rate-limited |
+
+## Three modes
+
+| Mode | Questions | Configs | Purpose |
+|---|---|---|---|
+| `--smoke` | 8 (round-robin over tasks) | 1–2 per model (`smoke:` in the config) | prove the GPU stack works end to end |
+| `--pilot` (default) | fixed-seed 30%, stratified by task | full grid | fast, comparable experiments |
+| `--full` | all | full grid | final numbers; resumable across sessions |
+
+Every command that touches data takes `--smoke`, `--pilot` or `--full`, and results go to
+`results/<dataset>_<mode>/`. [docs/MODES.md](docs/MODES.md) lists the exact files each mode
+writes and what a healthy run looks like. No runtime is promised: the smoke and profile runs
+measure it on your hardware.
 
 ## Two ways to run it
 
-1. **Kaggle notebook (easiest):** open [`notebooks/foveate_kaggle.ipynb`](notebooks/foveate_kaggle.ipynb)
-   on Kaggle, set the accelerator to **GPU T4 x2** and **Internet on**, choose
-   `MODE = "pilot"` or `"full"` in the first cell, and *Run All*. The notebook embeds
-   the whole package, so it needs nothing else.
-2. **This repo (any GPU machine):** the commands below.
-
-### Pilot vs full
-
-Every command that touches data takes `--pilot` (default) or `--full`.
-**Pilot = a fixed-seed 30% of the questions, stratified by task** (≈1,140 MVBench
-questions, 150 LingoQA questions). The same seed always selects the same questions,
-so pilot runs on different days are directly comparable.
-
----
-
-## Quick start (repo)
+1. **Kaggle notebook:** open [`notebooks/foveate_kaggle.ipynb`](notebooks/foveate_kaggle.ipynb)
+   on Kaggle with *GPU T4 x2* and *Internet on*, keep `MODE = "smoke"` for the first run,
+   then switch to `"pilot"` or `"full"`. The notebook embeds this exact package revision
+   (CI fails if it is stale), so it needs nothing else.
+2. **This repo:** `MODE=smoke|pilot|full GPUS=2 bash scripts/run_all.sh`, or stage by stage:
 
 ```bash
-git clone https://github.com/<you>/foveate && cd foveate
-bash scripts/setup_gpu.sh          # picks a vLLM build that matches your NVIDIA driver
-foveate env                        # GPU, driver, library versions
-
-# Everything, end to end (pilot, both GPUs):
-MODE=pilot bash scripts/run_all.sh
-# ...then read results/REPORT.md and results/figures/
-```
-
-Data goes to `./data` (override with `FOVEATE_DATA`), results to `./results`
-(`FOVEATE_RESULTS`), decoded-frame cache to `data/frame_cache` (`FOVEATE_CACHE`).
-
-### Stage by stage
-
-```bash
-# Stage 1: batch-1 stage timing (synthetic frames: no dataset needed)
-foveate profile --model 3b --source synthetic
-
-# Stage 2: data + quality grid (one process per GPU with --gpus 2)
-foveate download mvbench --tasks all          # ~17 GB; --tasks lite skips the 11 GB Perception zip
-foveate grid --dataset mvbench --pilot --model 3b --gpus 2
-foveate grid --dataset mvbench --pilot --model 7b --gpus 2
-
-# Stage 4 data: rerun the ladder on fog / night / blur copies
-foveate shift --dataset mvbench --pilot --model 3b --gpus 2
+foveate profile --model 3b --source synthetic                 # 1 Profile (no dataset needed)
+foveate download mvbench --tasks all                          # ~17 GB; --tasks lite skips 11 GB
+foveate grid  --dataset mvbench --pilot --model 3b --gpus 2   # 2 Benchmark (one process per GPU)
+foveate grid  --dataset mvbench --pilot --model 7b --gpus 2
+foveate shift --dataset mvbench --pilot --model 3b --gpus 2   # 4 shifted copies
 foveate shift --dataset mvbench --pilot --model 7b --gpus 2
-
-# Stages 3-4: replay every policy from the cache (CPU, seconds)
-foveate replay --dataset mvbench --pilot
-
-# Driving demo
-foveate download lingoqa
-foveate grid  --dataset lingoqa --pilot --model 3b --gpus 2
-foveate grid  --dataset lingoqa --pilot --model 7b --gpus 2
-foveate judge --dataset lingoqa --pilot
-foveate replay --dataset lingoqa --pilot
-
-# Stage 5: vLLM servers (3B on GPU 0, 7B-AWQ on GPU 1) + gateway + load test
-MODE=pilot bash scripts/serve_and_load.sh
-
-# Figures and the summary
-foveate report
+foveate replay --dataset mvbench --pilot                      # 3 + 4 policies and shift (CPU)
+MODE=pilot bash scripts/serve_and_load.sh                     # 5 Serve: vLLM x2 + gateway + load
+foveate report                                                # results/REPORT.md + figures/
 ```
 
-Every grid run is **resumable**: if a Kaggle session dies, rerun the same command
-and it skips questions already in the output files.
+Data goes to `./data` (`FOVEATE_DATA`), results to `./results` (`FOVEATE_RESULTS`), the
+decoded-frame cache to `data/frame_cache` (`FOVEATE_CACHE`).
 
-### Rough GPU time on Kaggle 2× T4
+## Kaggle T4 x2 specifics
 
-These are planning estimates from FLOP arithmetic, not measurements. Your Stage 1
-profile replaces them with real numbers.
+- **Precision.** The T4 (compute capability 7.5) has no bf16, so `--dtype auto` resolves to
+  float16. An explicit `--dtype bfloat16` on a T4 is an error, not a silent emulation. AWQ
+  always computes in fp16. The dtype used is recorded in every cost file.
+- **Numerical stability.** fp16 overflow shows up as NaN confidences or one constant
+  answer. The grid and the smoke test check for both. The fallback is
+  `--dtype float32 --tp 2` (3B only, spanning both T4s).
+- **Placement.** One process per GPU (`CUDA_VISIBLE_DEVICES`). The two 16 GB cards are
+  separate memory pools. The 3B model is ~7 GiB of fp16 weights and the 7B-AWQ about
+  6.6 GiB (int4 LLM, fp16 ViT and embeddings).
+- **Memory-fit guard.** Before loading, each config gets an estimate of weights + KV for one
+  full `max_model_len` sequence + activations + overhead, plus an exact context-length check.
+  Configs that don't fit are written to `results/<run>/skipped.jsonl` with the reason and are
+  never replaced by another config. For example, the unquantized 7B (15 GiB) and 16 frames at
+  896 px (over 8,192 tokens) are skipped. The estimate is a guard, not a measurement.
+- **Engines.** `setup_gpu.sh` picks the vLLM build from the driver's CUDA version (override
+  with `VLLM_OVERRIDE`). If vLLM fails to start, `--backend auto` falls back to Transformers.
+  Those rows are labelled `backend=hf`, the event is logged in `events.jsonl`, and a grid file
+  never mixes backends. The AWQ 7B is skipped (with a reason) on that path rather than
+  swapped for another model.
 
-| Step | Pilot (30%) | Full |
+## What is verified
+
+| Layer | How | Status |
 |---|---|---|
-| setup + MVBench download | 20–30 min | same |
-| profile | ~15 min | same |
-| grid, 3B (7 configs) | ~45 min | ~2.5 h |
-| grid, 7B-AWQ (2 configs) | ~25 min | ~1.5 h |
-| shift (3 corruptions × 3 configs) | ~60 min | ~3.5 h |
-| LingoQA (both models + judge) | ~10 min | ~30 min |
-| serving load tests | ~30 min | same |
+| Token math, stats, data selection, corruptions, memory guard, dtype rules | unit tests | ✅ CPU |
+| Transformers backend: processor → Qwen2.5-VL forward → CUDA-event hooks → letter log-probs | tiny *random* Qwen2.5-VL, real code path | ✅ CPU |
+| `foveate smoke` end to end: real subprocesses, grid, validation, profile, SMOKE.md | tiny random Qwen2.5-VL through Transformers | ✅ CPU, random weights |
+| Grid → replay → shift → report, smoke validator | stand-in model (`FakeBackend`, timings MOCKED and rejected by the smoke checker) | ✅ CPU, mocked |
+| Gateway cascade, routing check, load generator | fake OpenAI-compatible streaming server | ✅ CPU, mocked |
+| vLLM offline engine, `vllm serve` flags, real Qwen2.5-VL 3B / 7B-AWQ weights, T4 numerics, real timings | — | ❌ **not run yet**: first GPU step is `foveate smoke` |
 
-Kaggle sessions stop after 12 hours and give 30 GPU-hours a week, so run the pilot
-first, then the full grid, and the full shift study in a second session if needed.
-Set `RUN_LINGOQA=0`, `RUN_SERVING=0` or `TASKS=lite` to trim.
-
----
-
-## What you get
-
-`results/REPORT.md` with tables and figures, all generated from result files:
-
-- **Stage 1:** latency breakdown per (frames, resolution); TTFT vs visual tokens with a
-  linear fit; prefill vs decode; achieved TFLOP/s vs the GPU's spec peak.
-- **Stage 2–3:** accuracy (bootstrap 95% CI) vs cost for every static config, the
-  learned rules, the cascade, rules+cascade and the oracle, on a held-out half, with
-  paired accuracy differences; confidence AUROC/ECE per config; per-task heatmap;
-  ablations.
-- **Stage 4:** escalation rate and accuracy clean vs shifted; a clean→fog stream with
-  a drift alarm; cost of a drift-aware cascade.
-- **Stage 5:** throughput, p50/p95/p99 latency and TTFT for the cascade vs the best
-  fixed config under the same Poisson trace.
+`pytest -q` runs 29 tests in CI on Python 3.11 and 3.12. [docs/AUDIT.md](docs/AUDIT.md)
+records the audit findings, the fixes, and what remains unverified.
 
 ## Theory, one note per stage
 
@@ -149,53 +179,49 @@ Set `RUN_LINGOQA=0`, `RUN_SERVING=0` or `TASKS=lite` to trim.
 
 ```
 src/foveate/
-  tokens.py            visual-token, FLOP and KV-cache arithmetic (+ GPU spec table)
-  data/                MVBench, LingoQA, synthetic loaders; frame sampling/cache; corruptions
+  tokens.py            visual-token, FLOP, weight and KV-cache arithmetic (+ GPU spec table)
+  memory.py            per-GPU memory-fit guard; skipped configs with reasons
+  data/                MVBench, LingoQA, synthetic (MP4) loaders; frame sampling/cache; corruptions
   backends/            hf_backend.py (stage timing via CUDA events), vllm_backend.py (fast path)
-  profile.py           Stage 1 sweep          grid.py     Stage 2 runner (sharded, resumable)
-  policy.py            Stage 3 policies       drift.py    Stage 4 shift + stream detector
-  serve/               Stage 5 gateway (FastAPI) and Poisson load generator
-  report.py            figures + REPORT.md    cli.py      `foveate ...`
-  configs/default.yaml models, grids, ladder, shift and profile settings
+  profile.py  Stage 1   grid.py   Stage 2 (sharded, resumable)   policy.py  Stage 3
+  drift.py    Stage 4   serve/    Stage 5 gateway + Poisson load generator
+  smoke.py             `foveate smoke` end-to-end checker      report.py  figures + REPORT.md
+  configs/default.yaml models, grids, smoke configs, ladder, shift and profile settings
+docs/                  architecture graphic, modes, audit, PyTorchCon notes
 theory/                one note per stage
-notebooks/             the self-contained Kaggle notebook (built by tools/build_notebook.py)
-tests/                 CPU tests, incl. a tiny random Qwen2.5-VL and a fake-model pipeline
+notebooks/             self-contained Kaggle notebook (built by tools/build_notebook.py)
+tests/                 CPU tests (tiny random Qwen2.5-VL, fake model, fake vLLM server)
 ```
 
-To change what runs, edit `src/foveate/configs/default.yaml` or pass
-`--config my.yaml`. Configs are written `MODEL:FRAMESxRES`, e.g. `3b:8x448`.
+Configs are written `MODEL:FRAMESxRES`, e.g. `3b:8x448`. Edit
+`src/foveate/configs/default.yaml` or pass `--config my.yaml`.
 
 ## Troubleshooting
 
-- **vLLM will not install or start.** The grid's default `--backend auto` falls back to
-  Transformers (batch 1, several times slower, same results format). The 7B rung needs
-  vLLM because it is an AWQ checkpoint; without it, run the 3B grid only and the
-  cascade uses the 3B rungs. You can force a vLLM version with
-  `VLLM_OVERRIDE="vllm==0.11.0" bash scripts/setup_gpu.sh`.
-- **NaN confidences or one repeated answer.** That is fp16 overflow on a GPU without
-  bf16. Rerun with `--dtype float32 --tp 2` (3B only; it then spans both T4s).
-- **Out of memory at start-up.** Add `--enforce-eager` and/or `--gpu-mem 0.85`.
+- **Smoke test FAILs.** Read `results/smoke/SMOKE.md`, then `results/smoke/grid_<model>.log`.
+- **vLLM will not install or start.** Try `VLLM_OVERRIDE="vllm==0.11.0" bash scripts/setup_gpu.sh`.
+  Without vLLM, `--backend hf` runs the 3B grid (batch 1). Its accuracy is comparable;
+  its timings aren't.
+- **NaN confidences or one repeated answer.** fp16 overflow: `--dtype float32 --tp 2` (3B).
+- **Out of memory at start-up.** `--enforce-eager` and/or `--gpu-mem 0.85`; check `skipped.jsonl`.
 - **LingoQA download fails.** Google Drive rate-limits shared folders. Download the
-  evaluation folder manually from the link in the
-  [LingoQA repo](https://github.com/wayveai/lingoqa) into `data/lingoqa/` and unzip it.
-- **Disk.** MVBench needs ~17 GB after extraction (zips are deleted as they are
-  extracted). Use `--tasks lite` (~6 GB) when space is tight.
+  evaluation folder from the [LingoQA repo](https://github.com/wayveai/lingoqa) into
+  `data/lingoqa/` manually.
+- **Disk.** MVBench needs ~17 GB after extraction. `--tasks lite` needs ~6 GB.
 
 ## Honest limits
 
-- MVBench accuracy at 4–16 frames will sit below Qwen's published 67.0 / 69.6, which
-  used up to 768 frames. The comparison that matters is between policies on the same
-  questions.
+- No result in this repository was produced on a GPU yet. The planning numbers in older
+  notes were FLOP arithmetic and are theoretical until a profile run replaces them.
+- MVBench accuracy at 4–16 frames is below Qwen's published scores, which used many more
+  frames. The comparison that matters is between policies on the same questions.
 - One NTU-based MVBench task (`fine_grained_pose`) is not redistributable and is skipped.
 - LingoQA scoring depends on a learned judge.
-- Synthetic corruptions are a robustness study, not evidence of on-road safety. This is
-  not a driving system.
-- Novelty: cascades, routing and adaptive frame selection all have prior work (see
-  theory/03). The contribution here is a measured, held-out cost/accuracy trade-off on a
-  real serving stack.
+- Cascades, routing and adaptive frame selection all have prior work (theory/03). The
+  contribution here is a measured, held-out cost/accuracy trade-off on a real serving
+  stack, reported whether or not the cascade wins.
 
 ## Licences
 
-Code: MIT. MVBench is distributed under MIT on the Hugging Face Hub (its source
-videos keep their original licences). LingoQA has its own licence; read it before
-redistributing anything derived from it. Model weights follow the Qwen licences.
+Code: MIT. MVBench is distributed under MIT on the Hugging Face Hub (its source videos keep
+their original licences). LingoQA has its own licence. Model weights follow the Qwen licences.
