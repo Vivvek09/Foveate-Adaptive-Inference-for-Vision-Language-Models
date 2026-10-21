@@ -43,12 +43,12 @@ wrong ones, and the report says so either way.
 ## Results
 
 First full run: **Kaggle 2x NVIDIA T4, vLLM 0.32.0, Qwen2.5-VL-3B (fp16) and
-Qwen2.5-VL-7B-AWQ, MVBench pilot, October 19 2026.** Every number below is copied from that
+Qwen2.5-VL-7B-AWQ, MVBench (1,135-question fixed-seed subset), October 19 2026.** Every number below is copied from that
 run's generated report and serving summaries into
-[`docs/results/pilot_2026-10-19.json`](docs/results/pilot_2026-10-19.json), and the figures
+[`docs/results/mvbench_2026-10-19.json`](docs/results/mvbench_2026-10-19.json), and the figures
 are drawn from that file by [`tools/make_readme_figures.py`](tools/make_readme_figures.py).
-This is a pilot (30% of MVBench), so treat differences inside the confidence intervals as
-ties.
+The run used a fixed-seed 30% of MVBench, stratified by task, so treat differences inside
+the confidence intervals as ties.
 
 ### 1. GPU time follows visual tokens
 
@@ -72,7 +72,7 @@ Up to about 1,000 visual tokens, vision encoder plus prefill costs a roughly con
 | Confidence cascade (τ = 0.981) | 0.688 (0.649–0.725) | 2,809 ms | 1.73x |
 | Oracle (not deployable) | 0.836 (0.804–0.866) | 257 ms | 0.16x |
 
-1,135 pilot questions over 19 tasks; τ and the rules were fit on 568 and scored on the
+1,135 questions over 19 tasks; τ and the rules were fit on 568 and scored on the
 other 567. Cost is warm batch-1 latency on vLLM, and a cascade pays for every rung it runs.
 
 - **Rules** (one setting per task family) match the 7B within noise at 0.63x its latency.
@@ -176,7 +176,7 @@ decoded-frame cache to `data/frame_cache` (`FOVEATE_CACHE`).
 | E5 | Serving | 5 Serve | cascade vs best static setting under the same Poisson traces at 0.5 / 1 / 2 req/s: p50/p95/p99, throughput |
 | E6 | Driving demo | 2–3 | LingoQA (free-form, Lingo-Judge) through the same pipeline |
 
-E0–E5 have run on the MVBench pilot ([Results](#results)). E6 is implemented but not yet
+E0–E5 have run on MVBench ([Results](#results)). E6 is implemented but not yet
 reported; its download can be rate-limited.
 
 **What each stage does**
@@ -238,10 +238,10 @@ writes and what a healthy run looks like.
 |---|---|---|
 | Token math, stats, data selection, corruptions, memory guard, dtype rules | unit tests | ✅ CPU |
 | Transformers backend: processor → Qwen2.5-VL forward → CUDA-event hooks → letter log-probs | tiny random Qwen2.5-VL in tests; real 3B profile on T4 | ✅ CPU and GPU |
-| vLLM offline engine with real Qwen2.5-VL-3B and 7B-AWQ, T4 fp16 numerics | `foveate smoke` and the MVBench pilot on Kaggle 2x T4 | ✅ GPU (Oct 2026) |
-| Grid → replay → shift → report | stand-in model in tests; MVBench pilot on GPU | ✅ CPU and GPU |
+| vLLM offline engine with real Qwen2.5-VL-3B and 7B-AWQ, T4 fp16 numerics | `foveate smoke` and the MVBench run on Kaggle 2x T4 | ✅ GPU (Oct 2026) |
+| Grid → replay → shift → report | stand-in model in tests; MVBench run on GPU | ✅ CPU and GPU |
 | Gateway cascade, routing check, load generator against real `vllm serve` | fake OpenAI-compatible server in tests; 6 load runs × 200 requests on GPU | ✅ CPU and GPU |
-| Full MVBench (not pilot), LingoQA, other GPUs or model families | — | ❌ not run |
+| All of MVBench (beyond the 30% subset), LingoQA, other GPUs or model families | — | ❌ not run |
 
 `pytest -q` runs 38 tests in CI on Python 3.11 and 3.12. Rows produced by the test stand-in
 model are marked MOCKED, and the smoke checker rejects mocked timings.
@@ -289,7 +289,7 @@ tests/                 CPU tests (tiny random Qwen2.5-VL, fake model, fake vLLM 
 
 ## Limitations
 
-- **Pilot scale.** The results use 30% of MVBench (567 held-out questions), so intervals are
+- **Subset scale.** The results use 30% of MVBench (567 held-out questions), so intervals are
   about ±4 points. Several policy differences are within noise.
 - **One model family, one GPU type.** Qwen2.5-VL 3B and 7B-AWQ on T4s. The 7B is
   quantized, which may contribute to its overconfidence.
