@@ -1,7 +1,7 @@
 # Foveate: Adaptive Inference for Vision-Language Models
 
 **An open-source harness for profiling, benchmarking and adaptive inference of video
-vision-language models (VLMs), built for and measured on Kaggle's free 2x T4 GPUs.**
+vision-language models (VLMs), built for and measured on Kaggle's 2x T4 GPUs.**
 
 [![ci](https://github.com/Vivvek09/Foveate-Adaptive-Inference-for-Vision-Language-Models/actions/workflows/ci.yml/badge.svg)](https://github.com/Vivvek09/Foveate-Adaptive-Inference-for-Vision-Language-Models/actions/workflows/ci.yml)
 
