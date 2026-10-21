@@ -12,8 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 EMBED_GLOBS = ["pyproject.toml", "README.md", "LICENSE", "requirements-gpu.txt",
-               "src/foveate/**/*.py", "src/foveate/configs/*.yaml", "scripts/*.sh", "theory/*.md",
-               "docs/*.md"]
+               "src/foveate/**/*.py", "src/foveate/configs/*.yaml", "scripts/*.sh", "docs/*.md"]
 
 
 def md(text: str) -> dict:
@@ -45,13 +44,13 @@ def build() -> dict:
 Then set `MODE` below and use *Run All*. Results land in `/kaggle/working/foveate_results`
 (kept after the session ends) and are zipped at the end for download.
 
-| Stage | Command | What it does | Theory |
-|---|---|---|---|
-| 1 Profile | `profile` | where batch-1 latency goes (load, ViT, prefill, decode), CUDA events | `theory/01` |
-| 2 Benchmark | `grid` | every question × every frames/resolution/model config, cached | `theory/02` |
-| 3 Optimize | `replay` | baselines vs rules vs cascade vs oracle, on a held-out half | `theory/03` |
-| 4 Shift evaluation | `shift` + `replay` | fog/night/blur: does the cascade spend more on harder inputs? | `theory/04` |
-| 5 Serve | `serve` + `loadtest` | vLLM (3B on GPU0, 7B-AWQ on GPU1) + gateway under Poisson load | `theory/05` |
+| Stage | Command | What it does |
+|---|---|---|
+| 1 Profile | `profile` | where batch-1 latency goes (load, ViT, prefill, decode), CUDA events |
+| 2 Benchmark | `grid` | every question × every frames/resolution/model config, cached |
+| 3 Optimize | `replay` | baselines vs rules vs cascade vs oracle, on a held-out half |
+| 4 Shift evaluation | `shift` + `replay` | fog/night/blur: does the cascade spend more on harder inputs? |
+| 5 Serve | `serve` + `loadtest` | vLLM (3B on GPU0, 7B-AWQ on GPU1) + gateway under Poisson load |
 
 Three modes (see `docs/MODES.md` for the exact outputs of each):
 
@@ -146,7 +145,7 @@ if MODE == "smoke":
 
 Batch-1 Transformers runs with CUDA events around the vision encoder and every decode
 step, over frames × resolution on synthetic frames (compute does not depend on pixel
-content). Read `theory/01_anatomy_of_vlm_inference.md` alongside.
+content).
 """),
         code("""
 if MODE == "smoke":
@@ -163,14 +162,14 @@ if os.path.exists(p):
     cols = ["sweep","frames","res","out_tokens","visual_tokens","load_ms","preprocess_ms","vision_ms","prefill_ms","decode_ms","tpot_ms","e2e_ms","peak_mem_gb","vision_mfu","prefill_mfu"]
     display(df[[c for c in cols if c in df]].round(2))
 """),
-        md("## 2 · Quality grid on MVBench\nEvery question through every config once; answers, confidences, tokens and costs are cached under `results/mvbench_<mode>/`. See `theory/02`."),
+        md("## 2 · Quality grid on MVBench\nEvery question through every config once; answers, confidences, tokens and costs are cached under `results/mvbench_<mode>/`."),
         code("!foveate download mvbench --tasks {TASKS}"),
         code("!foveate grid --dataset mvbench --{MODE} --tasks {TASKS} --model 3b --gpus {GPUS}"),
         code("""
 if RUN_7B:
     !foveate grid --dataset mvbench --{MODE} --tasks {TASKS} --model 7b --gpus {GPUS}
 """),
-        md("## 3 + 4 · Shifted copies, then replay every policy\n`shift` reruns the ladder on fog / night / blur frames. `replay` evaluates static configs, learned rules, the confidence cascade, rules+cascade and the oracle on a held-out half, plus the drift study. See `theory/03` and `theory/04`."),
+        md("## 3 + 4 · Shifted copies, then replay every policy\n`shift` reruns the ladder on fog / night / blur frames. `replay` evaluates static configs, learned rules, the confidence cascade, rules+cascade and the oracle on a held-out half, plus the drift study."),
         code("""
 if RUN_SHIFT:
     !foveate shift --dataset mvbench --{MODE} --tasks {TASKS} --model 3b --gpus {GPUS}
@@ -200,7 +199,7 @@ if RUN_LINGOQA:
     else:
         print("LingoQA download failed: see README > Troubleshooting")
 """),
-        md("## 5 · Serving under load\nOne vLLM server per T4 (3B on GPU 0, 7B-AWQ on GPU 1), the Foveate gateway in front, and an open-loop Poisson load test comparing the cascade with the best fixed config. See `theory/05`."),
+        md("## 5 · Serving under load\nOne vLLM server per T4 (3B on GPU 0, 7B-AWQ on GPU 1), the Foveate gateway in front, and an open-loop Poisson load test comparing the cascade with the best fixed config."),
         code("""
 if RUN_SERVING:
     os.environ["MODE"], os.environ["TASKS"] = MODE, TASKS

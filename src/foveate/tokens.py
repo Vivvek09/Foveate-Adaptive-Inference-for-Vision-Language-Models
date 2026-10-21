@@ -4,7 +4,7 @@ Qwen2.5-VL cuts each frame into 14x14 patches, merges every 2x2 block of
 patches into one LLM token (so one token covers 28x28 pixels) and, for video,
 fuses every 2 consecutive frames into one temporal patch. Everything the
 profiler measures should line up with these formulas; when it does not, that
-gap is a finding (see theory/01_anatomy_of_vlm_inference.md).
+gap is a finding.
 """
 
 from __future__ import annotations
