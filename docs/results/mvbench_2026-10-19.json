@@ -1,5 +1,5 @@
 {
- "about": "Summary numbers from the first GPU runs of Foveate on Kaggle (2x NVIDIA T4, vLLM 0.32.0, torch 2.13, transformers 5.16.1), Oct 19 2026. Copied from the run's results/REPORT.md (stages 1-4, MVBench pilot) and results/serving/*.summary.json (stage 5). tools/make_readme_figures.py draws the README figures from this file.",
+ "about": "Summary numbers from the first GPU runs of Foveate on Kaggle (2x NVIDIA T4, vLLM 0.32.0, torch 2.13, transformers 5.16.1), Oct 19 2026. Copied from the run's results/REPORT.md (stages 1-4, MVBench 30% subset) and results/serving/*.summary.json (stage 5). tools/make_readme_figures.py draws the README figures from this file.",
  "profile": {
   "model": "Qwen2.5-VL-3B-Instruct",
   "backend": "transformers, batch 1, CUDA events, median of timed repeats",
@@ -178,7 +178,7 @@
   ]
  },
  "mvbench_policies": {
-  "split": "MVBench pilot (1,135 questions, 19 tasks); tau and rules fit on 568 calibration questions, reported on 567 held-out",
+  "split": "MVBench 30% subset (1,135 questions, 19 tasks); tau and rules fit on 568 calibration questions, reported on 567 held-out",
   "cost_metric": "warm batch-1 latency on vLLM (ms); cascade = sum of rungs run",
   "ladder": [
    "3b:4x224",

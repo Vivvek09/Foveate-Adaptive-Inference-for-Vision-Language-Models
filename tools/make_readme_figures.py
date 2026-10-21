@@ -1,4 +1,4 @@
-"""Draw the README figures from docs/results/pilot_2026-10-19.json.
+"""Draw the README figures from docs/results/mvbench_2026-10-19.json.
 
     python tools/make_readme_figures.py
 
@@ -17,7 +17,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-DATA = ROOT / "docs" / "results" / "pilot_2026-10-19.json"
+DATA = ROOT / "docs" / "results" / "mvbench_2026-10-19.json"
 OUT = ROOT / "docs" / "figures"
 ACCENT, GREY, DARK, LIGHT = "#2a6fdb", "#9a9a9a", "#222222", "#e6e6e6"
 
@@ -94,7 +94,7 @@ def frontier_figure(d: dict) -> None:
                   fontsize=9, color="#444444")
     ax.set_ylabel("accuracy (held-out)", fontsize=9, color="#444444")
     _style(ax, "Rules match the 7B within noise at 0.63x its latency; the cascade costs 1.73x",
-           "MVBench pilot, 567 held-out questions; whiskers are 95% bootstrap intervals")
+           "MVBench, 567 held-out questions; whiskers are 95% bootstrap intervals")
     fig.tight_layout()
     fig.savefig(OUT / "mvbench_accuracy_vs_cost.png")
     plt.close(fig)
