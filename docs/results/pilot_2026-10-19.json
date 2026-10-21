@@ -1,0 +1,511 @@
+{
+ "about": "Summary numbers from the first GPU runs of Foveate on Kaggle (2x NVIDIA T4, vLLM 0.32.0, torch 2.13, transformers 5.16.1), Oct 19 2026. Copied from the run's results/REPORT.md (stages 1-4, MVBench pilot) and results/serving/*.summary.json (stage 5). tools/make_readme_figures.py draws the README figures from this file.",
+ "profile": {
+  "model": "Qwen2.5-VL-3B-Instruct",
+  "backend": "transformers, batch 1, CUDA events, median of timed repeats",
+  "rows": [
+   {
+    "frames": 1,
+    "res": 224,
+    "visual_tokens": 60,
+    "load_ms": 12.749,
+    "preprocess_ms": 3.298,
+    "vision_ms": 42.215,
+    "prefill_ms": 72.117
+   },
+   {
+    "frames": 1,
+    "res": 448,
+    "visual_tokens": 252,
+    "load_ms": 15.284,
+    "preprocess_ms": 6.509,
+    "vision_ms": 131.591,
+    "prefill_ms": 168.845
+   },
+   {
+    "frames": 1,
+    "res": 672,
+    "visual_tokens": 558,
+    "load_ms": 17.275,
+    "preprocess_ms": 11.751,
+    "vision_ms": 305.74,
+    "prefill_ms": 331.834
+   },
+   {
+    "frames": 1,
+    "res": 896,
+    "visual_tokens": 1008,
+    "load_ms": 16.14,
+    "preprocess_ms": 41.736,
+    "vision_ms": 543.684,
+    "prefill_ms": 637.209
+   },
+   {
+    "frames": 2,
+    "res": 224,
+    "visual_tokens": 60,
+    "load_ms": 25.418,
+    "preprocess_ms": 3.665,
+    "vision_ms": 43.055,
+    "prefill_ms": 73.566
+   },
+   {
+    "frames": 2,
+    "res": 448,
+    "visual_tokens": 252,
+    "load_ms": 29.495,
+    "preprocess_ms": 6.89,
+    "vision_ms": 131.29,
+    "prefill_ms": 167.123
+   },
+   {
+    "frames": 2,
+    "res": 672,
+    "visual_tokens": 558,
+    "load_ms": 34.809,
+    "preprocess_ms": 19.372,
+    "vision_ms": 304.311,
+    "prefill_ms": 328.199
+   },
+   {
+    "frames": 2,
+    "res": 896,
+    "visual_tokens": 1008,
+    "load_ms": 30.499,
+    "preprocess_ms": 46.477,
+    "vision_ms": 543.295,
+    "prefill_ms": 632.788
+   },
+   {
+    "frames": 4,
+    "res": 224,
+    "visual_tokens": 120,
+    "load_ms": 48.6,
+    "preprocess_ms": 4.612,
+    "vision_ms": 67.672,
+    "prefill_ms": 93.655
+   },
+   {
+    "frames": 4,
+    "res": 448,
+    "visual_tokens": 504,
+    "load_ms": 58.725,
+    "preprocess_ms": 11.934,
+    "vision_ms": 262.268,
+    "prefill_ms": 309.708
+   },
+   {
+    "frames": 4,
+    "res": 672,
+    "visual_tokens": 1116,
+    "load_ms": 69.726,
+    "preprocess_ms": 50.389,
+    "vision_ms": 593.064,
+    "prefill_ms": 717.984
+   },
+   {
+    "frames": 4,
+    "res": 896,
+    "visual_tokens": 2016,
+    "load_ms": 50.792,
+    "preprocess_ms": 98.929,
+    "vision_ms": 1077.224,
+    "prefill_ms": 1709.197
+   },
+   {
+    "frames": 8,
+    "res": 224,
+    "visual_tokens": 240,
+    "load_ms": 102.152,
+    "preprocess_ms": 6.95,
+    "vision_ms": 127.99,
+    "prefill_ms": 162.501
+   },
+   {
+    "frames": 8,
+    "res": 448,
+    "visual_tokens": 1008,
+    "load_ms": 117.064,
+    "preprocess_ms": 44.17,
+    "vision_ms": 510.829,
+    "prefill_ms": 627.208
+   },
+   {
+    "frames": 8,
+    "res": 672,
+    "visual_tokens": 2232,
+    "load_ms": 136.478,
+    "preprocess_ms": 107.249,
+    "vision_ms": 1169.241,
+    "prefill_ms": 1903.869
+   },
+   {
+    "frames": 8,
+    "res": 896,
+    "visual_tokens": 4032,
+    "load_ms": 99.218,
+    "preprocess_ms": 191.988,
+    "vision_ms": 2148.066,
+    "prefill_ms": 4891.031
+   },
+   {
+    "frames": 16,
+    "res": 224,
+    "visual_tokens": 480,
+    "load_ms": 207.0,
+    "preprocess_ms": 24.199,
+    "vision_ms": 257.27,
+    "prefill_ms": 307.864
+   },
+   {
+    "frames": 16,
+    "res": 448,
+    "visual_tokens": 2016,
+    "load_ms": 230.224,
+    "preprocess_ms": 96.81,
+    "vision_ms": 1024.023,
+    "prefill_ms": 1709.887
+   },
+   {
+    "frames": 16,
+    "res": 672,
+    "visual_tokens": 4464,
+    "load_ms": 268.243,
+    "preprocess_ms": 213.449,
+    "vision_ms": 2377.996,
+    "prefill_ms": 5858.424
+   }
+  ]
+ },
+ "mvbench_policies": {
+  "split": "MVBench pilot (1,135 questions, 19 tasks); tau and rules fit on 568 calibration questions, reported on 567 held-out",
+  "cost_metric": "warm batch-1 latency on vLLM (ms); cascade = sum of rungs run",
+  "ladder": [
+   "3b:4x224",
+   "3b:8x448",
+   "3b:16x448",
+   "7b:16x448"
+  ],
+  "rows": [
+   {
+    "policy": "static 3b:4x224",
+    "baseline": "fixed cheapest",
+    "accuracy": 0.575,
+    "acc_lo": 0.536,
+    "acc_hi": 0.616,
+    "mean_cost_ms": 162.608,
+    "escalation_rate": 0.0
+   },
+   {
+    "policy": "static 3b:4x448",
+    "baseline": "",
+    "accuracy": 0.596,
+    "acc_lo": 0.556,
+    "acc_hi": 0.637,
+    "mean_cost_ms": 274.952,
+    "escalation_rate": 0.0
+   },
+   {
+    "policy": "static 3b:8x224",
+    "baseline": "",
+    "accuracy": 0.586,
+    "acc_lo": 0.545,
+    "acc_hi": 0.624,
+    "mean_cost_ms": 251.535,
+    "escalation_rate": 0.0
+   },
+   {
+    "policy": "static 3b:8x448",
+    "baseline": "",
+    "accuracy": 0.654,
+    "acc_lo": 0.615,
+    "acc_hi": 0.691,
+    "mean_cost_ms": 499.468,
+    "escalation_rate": 0.0
+   },
+   {
+    "policy": "static 3b:8x672",
+    "baseline": "",
+    "accuracy": 0.646,
+    "acc_lo": 0.607,
+    "acc_hi": 0.686,
+    "mean_cost_ms": 500.494,
+    "escalation_rate": 0.0
+   },
+   {
+    "policy": "static 3b:16x224",
+    "baseline": "",
+    "accuracy": 0.624,
+    "acc_lo": 0.587,
+    "acc_hi": 0.663,
+    "mean_cost_ms": 410.194,
+    "escalation_rate": 0.0
+   },
+   {
+    "policy": "static 3b:16x448",
+    "baseline": "static intermediate",
+    "accuracy": 0.658,
+    "acc_lo": 0.619,
+    "acc_hi": 0.697,
+    "mean_cost_ms": 1041.748,
+    "escalation_rate": 0.0
+   },
+   {
+    "policy": "static 7b:8x448",
+    "baseline": "",
+    "accuracy": 0.654,
+    "acc_lo": 0.614,
+    "acc_hi": 0.691,
+    "mean_cost_ms": 803.736,
+    "escalation_rate": 0.0
+   },
+   {
+    "policy": "static 7b:16x448",
+    "baseline": "fixed strongest (reference)",
+    "accuracy": 0.683,
+    "acc_lo": 0.644,
+    "acc_hi": 0.72,
+    "mean_cost_ms": 1624.787,
+    "escalation_rate": 0.0
+   },
+   {
+    "policy": "rules",
+    "baseline": "",
+    "accuracy": 0.672,
+    "acc_lo": 0.633,
+    "acc_hi": 0.709,
+    "mean_cost_ms": 1021.27,
+    "escalation_rate": 0.0
+   },
+   {
+    "policy": "cascade (tau=0.981)",
+    "baseline": "",
+    "accuracy": 0.688,
+    "acc_lo": 0.649,
+    "acc_hi": 0.725,
+    "mean_cost_ms": 2808.544,
+    "escalation_rate": 0.931
+   },
+   {
+    "policy": "rules+cascade (tau=0.000)",
+    "baseline": "",
+    "accuracy": 0.672,
+    "acc_lo": 0.633,
+    "acc_hi": 0.709,
+    "mean_cost_ms": 1021.27,
+    "escalation_rate": 0.0
+   },
+   {
+    "policy": "oracle (upper bound, not deployable)",
+    "baseline": "",
+    "accuracy": 0.836,
+    "acc_lo": 0.804,
+    "acc_hi": 0.866,
+    "mean_cost_ms": 256.78,
+    "escalation_rate": 0.0
+   }
+  ],
+  "learned_rules": {
+   "count": "3b:16x448",
+   "detail": "3b:8x448",
+   "motion": "7b:16x448",
+   "other": "7b:16x448",
+   "temporal": "3b:8x448"
+  }
+ },
+ "confidence": [
+  {
+   "config": "3b:4x224",
+   "accuracy": 0.575,
+   "auroc": 0.707,
+   "ece": 0.074,
+   "cost_ms": 162.608
+  },
+  {
+   "config": "3b:4x448",
+   "accuracy": 0.596,
+   "auroc": 0.731,
+   "ece": 0.075,
+   "cost_ms": 274.952
+  },
+  {
+   "config": "3b:8x224",
+   "accuracy": 0.586,
+   "auroc": 0.77,
+   "ece": 0.087,
+   "cost_ms": 251.535
+  },
+  {
+   "config": "3b:8x448",
+   "accuracy": 0.654,
+   "auroc": 0.785,
+   "ece": 0.049,
+   "cost_ms": 499.468
+  },
+  {
+   "config": "3b:8x672",
+   "accuracy": 0.646,
+   "auroc": 0.785,
+   "ece": 0.061,
+   "cost_ms": 500.494
+  },
+  {
+   "config": "3b:16x224",
+   "accuracy": 0.624,
+   "auroc": 0.775,
+   "ece": 0.066,
+   "cost_ms": 410.194
+  },
+  {
+   "config": "3b:16x448",
+   "accuracy": 0.658,
+   "auroc": 0.798,
+   "ece": 0.063,
+   "cost_ms": 1041.748
+  },
+  {
+   "config": "7b:8x448",
+   "accuracy": 0.654,
+   "auroc": 0.715,
+   "ece": 0.225,
+   "cost_ms": 803.736
+  },
+  {
+   "config": "7b:16x448",
+   "accuracy": 0.683,
+   "auroc": 0.725,
+   "ece": 0.197,
+   "cost_ms": 1624.787
+  }
+ ],
+ "shift": [
+  {
+   "corruption": "blur:3",
+   "clean_cascade_acc": 0.671,
+   "shifted_cascade_acc": 0.609,
+   "clean_escalation": 0.928,
+   "shifted_escalation": 0.97,
+   "clean_cheap_auroc": 0.714,
+   "shifted_cheap_auroc": 0.656,
+   "alarm_delay_requests": null,
+   "false_alarms_clean": 0
+  },
+  {
+   "corruption": "fog:3",
+   "clean_cascade_acc": 0.671,
+   "shifted_cascade_acc": 0.655,
+   "clean_escalation": 0.928,
+   "shifted_escalation": 0.956,
+   "clean_cheap_auroc": 0.714,
+   "shifted_cheap_auroc": 0.707,
+   "alarm_delay_requests": 39,
+   "false_alarms_clean": 0
+  },
+  {
+   "corruption": "night:3",
+   "clean_cascade_acc": 0.671,
+   "shifted_cascade_acc": 0.602,
+   "clean_escalation": 0.928,
+   "shifted_escalation": 0.989,
+   "clean_cheap_auroc": 0.714,
+   "shifted_cheap_auroc": 0.658,
+   "alarm_delay_requests": 17,
+   "false_alarms_clean": 0
+  }
+ ],
+ "serving": {
+  "setup": "vllm serve 3B fp16 on GPU 0 and 7B-AWQ on GPU 1, Foveate gateway, 200 seeded Poisson requests per run, 30% repeated clips, 5 untimed warm-up requests",
+  "runs": [
+   {
+    "policy": "cascade",
+    "requests": 200,
+    "ok": 200,
+    "throughput_rps": 0.4345,
+    "p50_ms": 8236.6592,
+    "p95_ms": 20371.4453,
+    "p99_ms": 23667.2744,
+    "mean_ms": 8870.2211,
+    "accuracy": 0.685,
+    "escalation_rate": 0.865,
+    "cold_p50_ms": 3142.821,
+    "offered_rps": 0.4636,
+    "rate": 0.5
+   },
+   {
+    "policy": "cascade",
+    "requests": 200,
+    "ok": 200,
+    "throughput_rps": 0.5441,
+    "p50_ms": 64642.0051,
+    "p95_ms": 135238.3205,
+    "p99_ms": 149144.1948,
+    "mean_ms": 67460.9075,
+    "accuracy": 0.685,
+    "escalation_rate": 0.865,
+    "cold_p50_ms": 3289.277,
+    "offered_rps": 0.9272,
+    "rate": 1.0
+   },
+   {
+    "policy": "cascade",
+    "requests": 200,
+    "ok": 200,
+    "throughput_rps": 0.5426,
+    "p50_ms": 103210.4568,
+    "p95_ms": 237680.8711,
+    "p99_ms": 257780.1941,
+    "mean_ms": 113525.1654,
+    "accuracy": 0.685,
+    "escalation_rate": 0.865,
+    "cold_p50_ms": 3095.6491,
+    "offered_rps": 1.8544,
+    "rate": 2.0
+   },
+   {
+    "policy": "static:7b:16x448",
+    "requests": 200,
+    "ok": 200,
+    "throughput_rps": 0.4263,
+    "p50_ms": 16466.8119,
+    "p95_ms": 30505.8733,
+    "p99_ms": 33892.856,
+    "mean_ms": 16225.8759,
+    "accuracy": 0.685,
+    "escalation_rate": 0.0,
+    "cold_p50_ms": 3746.9813,
+    "offered_rps": 0.4636,
+    "rate": 0.5
+   },
+   {
+    "policy": "static:7b:16x448",
+    "requests": 200,
+    "ok": 200,
+    "throughput_rps": 0.4184,
+    "p50_ms": 86904.9626,
+    "p95_ms": 245922.965,
+    "p99_ms": 257346.0152,
+    "mean_ms": 102643.8459,
+    "accuracy": 0.685,
+    "escalation_rate": 0.0,
+    "cold_p50_ms": 3929.0409,
+    "offered_rps": 0.9272,
+    "rate": 1.0
+   },
+   {
+    "policy": "static:7b:16x448",
+    "requests": 200,
+    "ok": 200,
+    "throughput_rps": 0.4178,
+    "p50_ms": 134643.6191,
+    "p95_ms": 344385.4186,
+    "p99_ms": 365660.7418,
+    "mean_ms": 156831.0421,
+    "accuracy": 0.685,
+    "escalation_rate": 0.0,
+    "cold_p50_ms": 3932.3202,
+    "offered_rps": 1.8544,
+    "rate": 2.0
+   }
+  ]
+ }
+}
