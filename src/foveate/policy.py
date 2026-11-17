@@ -9,6 +9,9 @@ Policies:
   rules       question keywords -> config, mapping learned on a calibration split
   cascade     start cheap, escalate along a ladder while confidence < tau
   rules+casc  rules pick the starting rung, then the cascade escalates
+  calibrated  the cascade after per-config temperature scaling (router.py)
+  router      probe with the cheapest rung, then jump to the config a learned
+              model predicts is best per unit cost (router.py)
   oracle      cheapest config that answers correctly (an unreachable upper bound
               that shows how much headroom adaptive allocation has)
 
@@ -380,7 +383,7 @@ def verdicts(policies: list[dict], names: dict[str, str]) -> list[str]:
     """Plain-language comparisons of each adaptive policy with each baseline (paired, held-out)."""
     by = {p["policy"]: p for p in policies}
     out = []
-    adaptive = [p for p in policies if p["policy"].startswith(("cascade", "rules"))]
+    adaptive = [p for p in policies if p["policy"].startswith(("cascade", "rules", "router"))]
     for a in adaptive:
         for bname, cfg in names.items():
             b = by.get(f"static {cfg}")
@@ -421,6 +424,27 @@ def replay(t: Table, ladder: list[str], ref: str | None = None, tol: float = 0.0
     ok_rc = [(tau, r) for tau, r in cands_rc if r["accuracy"] >= target]
     tau_rc = min(ok_rc, key=lambda x: x[1]["mean_cost"])[0] if ok_rc else taus[-1]
 
+    # Temperature scaling per rung, then the same threshold rule on calibrated confidences.
+    from . import router as rt
+
+    temps = rt.fit_temperatures(cal, ladder)
+    cal_s, test_s = rt.with_temperatures(cal, temps), rt.with_temperatures(test, temps)
+    taus_s = np.unique(np.quantile(cal_s.conf[:, [cal.col(c) for c in ladder]], np.linspace(0, 1, 41)))
+    taus_s = np.concatenate([[0.0], taus_s, [1.01]])
+    ok_s = [(tau, r) for tau in taus_s
+            if (r := evaluate(cal_s, cascade(cal_s, ladder, tau), "c"))["accuracy"] >= target]
+    tau_s = min(ok_s, key=lambda x: x[1]["mean_cost"])[0] if ok_s else taus_s[-1]
+
+    # Probe-then-route: lambda picked by cross-fitting inside the calibration half.
+    lam = rt.select_lambda(cal, ladder, target, seed=seed)
+    router = rt.fit_router(cal, ladder)
+    routed = rt.route(test, router, lam)
+    router_curve = []
+    for x in rt.LAMBDAS:
+        r = evaluate(test, rt.route(test, router, float(x)), "router")
+        r["lambda"] = float(x)
+        router_curve.append(r)
+
     # The trade-off curve over every threshold, on the held-out half (descriptive:
     # it shows the whole frontier; the operating point above was picked on calib).
     curve = []
@@ -452,6 +476,9 @@ def replay(t: Table, ladder: list[str], ref: str | None = None, tol: float = 0.0
     policies.append(ev(cascade(test, ladder, tau_star), f"cascade (tau={tau_star:.3f})", "adaptive"))
     policies.append(ev(cascade(test, ladder, tau_rc, start_test),
                        f"rules+cascade (tau={tau_rc:.3f})", "adaptive"))
+    policies.append(ev(cascade(test_s, ladder, tau_s),
+                       f"cascade, temperature-scaled (tau={tau_s:.3f})", "adaptive"))
+    policies.append(ev(routed, f"router (probe {ladder[0]}, lambda={lam:.3g})", "adaptive"))
     orc = ev(oracle(test), "oracle (upper bound, not deployable)", "oracle")
     policies.append(orc)
     deployable = [p for p in policies if p["kind"] != "oracle"]
@@ -482,6 +509,9 @@ def replay(t: Table, ladder: list[str], ref: str | None = None, tol: float = 0.0
             "cascade": escalation_analysis(test, ladder, tau_star),
             "rules+cascade": escalation_analysis(test, ladder, tau_rc, start_test),
         },
+        "calibration": rt.calibration_report(test, temps), "tau_scaled": float(tau_s),
+        "router": {"probe": ladder[0], "lambda": float(lam), "routes": rt.route_shares(test, routed[0]),
+                   "mean_runs": float(routed[2].mean()), "curve": router_curve},
         "verdicts": verdict, "curve": curve, "curve_split": "held-out",
         "confidence": confidence_report(test), "confidence_split": "held-out",
         "per_task": per_task,
