@@ -247,6 +247,15 @@ def cmd_replay(args, cfg):
     policy = {"dataset": args.dataset, "ladder": rep["ladder"], "tau": rep["tau"],
               "rules": rep["rules"], "costs": rep["costs"], "cost_metric": rep["cost_metric"]}
     (out / "policy.json").write_text(json.dumps(policy, indent=1))
+    if args.seeds > 1:
+        from .router import split_robustness
+
+        rob = split_robustness(t, ladder, list(range(args.seeds)), ref=args.ref, tol=args.tol)
+        (out / "seeds.json").write_text(json.dumps(rob, indent=1))
+        for r in rob["policies"]:
+            log.info("%-34s acc %.3f +- %.3f  cost x%.2f +- %.2f over %d splits", r["policy"],
+                     r["accuracy_mean"], r["accuracy_sd"], r["cost_ratio_mean"],
+                     r["cost_ratio_sd"], r["n_splits"])
     for p in rep["policies"]:
         log.info("%-34s acc %.3f [%.3f, %.3f]  cost %.1f", p["policy"], p["accuracy"],
                  p["acc_lo"], p["acc_hi"], p["mean_cost"])
@@ -386,6 +395,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ref", default=None, help="reference config (default: most accurate)")
     p.add_argument("--cost", default="latency_b1_ms", choices=["latency_b1_ms", "amortized_ms"])
     p.add_argument("--tol", type=float, default=0.0, help="accuracy the cascade may give up")
+    p.add_argument("--seeds", type=int, default=0,
+                   help="also refit and rescore every policy over this many calibration/test splits")
 
     p = sub.add_parser("serve", help="stage 5: policy gateway in front of vllm serve")
     p.add_argument("--dataset", default="mvbench")

@@ -17,9 +17,9 @@ vision-language models (VLMs), built for and measured on Kaggle's 2x T4 GPUs.**
 - **Measured honestly.** Thresholds fit on one half and scored on the other, paired bootstrap
   CIs, a non-deployable oracle ceiling, and fog/night/blur shift tests with a drift detector.
 
-**Stack:** PyTorch · vLLM · Qwen2.5-VL (3B fp16, 7B-AWQ) · FastAPI · CUDA events · pytest (38 tests in CI)
+**Stack:** PyTorch · vLLM · Qwen2.5-VL (3B fp16, 7B-AWQ) · FastAPI · CUDA events · pytest (42 tests in CI)
 
-**Contents:** [At a glance](#at-a-glance) · [The idea](#the-idea) · [Results](#results) · [Quick start](#quick-start) ·
+**Contents:** [At a glance](#at-a-glance) · [The idea](#the-idea) · [Results](#results) · [Research plan](docs/RESEARCH.md) · [Quick start](#quick-start) ·
 [Pipeline](#the-pipeline) · [Modes](#three-modes) · [Kaggle T4 notes](#kaggle-t4-x2-notes) ·
 [What is verified](#what-is-verified) · [Repository layout](#repository-layout) ·
 [Troubleshooting](#troubleshooting) · [Limitations](#limitations) · [Licences](#licences)
@@ -140,6 +140,22 @@ and sustains about 30% more throughput. Our reading: the static policy leaves GP
 and queues everything on GPU 1, while the cascade puts both GPUs to work. Above
 ~0.5 req/s both setups are past capacity on two T4s and latency is queueing.
 
+### 6. Next: learned routing, calibration and goodput
+
+The run above points at the next question: the oracle is far ahead, and the cascade loses
+offline because it climbs every rung on a weak confidence signal. Four methods now in the
+code address that. They are unit-tested on CPU; **their GPU numbers are not produced yet**.
+
+| Method | What it does | Command |
+|---|---|---|
+| Probe-then-route | runs the cheapest setting once, then jumps straight to the setting a learned model predicts is best per unit cost (at most two runs per question) | `foveate replay` |
+| Temperature scaling | calibrates each setting's confidence before the cascade threshold is chosen | `foveate replay` |
+| Split robustness | refits and rescores every policy over N calibration/test splits | `foveate replay --seeds 20` |
+| Goodput at a latency target | share of requests answered within the target, and the highest arrival rate that keeps it at 90% | `foveate loadtest`, `foveate report` |
+
+The first three replay the cached grid, so they need no GPU. Research questions, protocol,
+related work and the open experiments are in [docs/RESEARCH.md](docs/RESEARCH.md).
+
 ## Quick start
 
 On any CUDA machine (on Kaggle, use the notebook in the next section):
@@ -257,7 +273,7 @@ writes and what a healthy run looks like.
 | Gateway cascade, routing check, load generator against real `vllm serve` | fake OpenAI-compatible server in tests; 6 load runs × 200 requests on GPU | ✅ CPU and GPU |
 | All of MVBench (beyond the 30% subset), LingoQA, other GPUs or model families | — | ❌ not run |
 
-`pytest -q` runs 38 tests in CI on Python 3.11 and 3.12. Rows produced by the test stand-in
+`pytest -q` runs 42 tests in CI on Python 3.11 and 3.12. Rows produced by the test stand-in
 model are marked MOCKED, and the smoke checker rejects mocked timings.
 
 ## Repository layout
@@ -269,12 +285,14 @@ src/foveate/
   data/                MVBench, LingoQA, synthetic (MP4) loaders; frame sampling/cache; corruptions
   backends/            hf_backend.py (stage timing via CUDA events), vllm_backend.py (fast path)
   profile.py  Stage 1   grid.py   Stage 2 (sharded, resumable)   policy.py  Stage 3
-  drift.py    Stage 4   serve/    Stage 5 gateway + Poisson load generator
+  drift.py    Stage 4   serve/    Stage 5 gateway + Poisson load generator (SLO attainment, goodput)
+  router.py            probe-then-route, temperature scaling, split robustness (replayed on CPU)
   smoke.py             `foveate smoke` end-to-end checker      report.py  figures + REPORT.md
   configs/default.yaml models, grids, smoke settings, ladder, shift and profile settings
 docs/
   architecture.svg     pipeline diagram
   MODES.md             files and healthy-run checks per mode
+  RESEARCH.md          research questions, methods, protocol, open experiments, references
   results/             summary numbers from the October 2026 GPU run
   figures/             README figures (drawn by tools/make_readme_figures.py)
 scripts/               GPU setup, run-all, serve-and-load, serving check

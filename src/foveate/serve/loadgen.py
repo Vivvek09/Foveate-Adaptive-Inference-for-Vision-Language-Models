@@ -114,7 +114,35 @@ def _err_text(e: Exception) -> str:
     return msg[:500]
 
 
-def summarize(results: list[dict], wall: float, policy: str) -> dict:
+DEFAULT_SLO_MS = 30_000.0
+
+
+def slo_attainment(results: list[dict], slo_ms: float) -> float:
+    """Share of ALL requests (failures count as misses) answered within the latency target."""
+    if not results:
+        return float("nan")
+    return float(np.mean([bool(r.get("ok")) and r["client_latency_ms"] <= slo_ms for r in results]))
+
+
+def goodput(summaries: list[dict], target: float = 0.9) -> dict[str, float]:
+    """Per policy: the highest offered rate at which at least `target` of requests met the SLO.
+
+    This is the serving metric of DistServe (Zhong et al., OSDI 2024): a system is
+    judged by the load it carries while still meeting its latency target, not by
+    throughput or a median alone. 0.0 means no tested rate met it.
+    """
+    out: dict[str, float] = {}
+    for s in summaries:
+        rate, att = s.get("offered_rps"), s.get("slo_attainment")
+        if rate is None or att is None:
+            continue
+        out.setdefault(s["policy"], 0.0)
+        if att >= target:
+            out[s["policy"]] = max(out[s["policy"]], float(rate))
+    return out
+
+
+def summarize(results: list[dict], wall: float, policy: str, slo_ms: float = DEFAULT_SLO_MS) -> dict:
     ok = [r for r in results if r.get("ok")]
     lat = np.array([r["client_latency_ms"] for r in ok]) if ok else np.array([np.nan])
     ttft = np.array([r.get("ttft_ms", np.nan) for r in ok]) if ok else np.array([np.nan])
@@ -127,6 +155,10 @@ def summarize(results: list[dict], wall: float, policy: str) -> dict:
         "p50_ms": float(np.nanpercentile(lat, 50)), "p95_ms": float(np.nanpercentile(lat, 95)),
         "p99_ms": float(np.nanpercentile(lat, 99)), "mean_ms": float(np.nanmean(lat)),
         "ttft_p50_ms": float(np.nanpercentile(ttft, 50)), "ttft_p95_ms": float(np.nanpercentile(ttft, 95)),
+        "slo_ms": slo_ms, "slo_attainment": slo_attainment(results, slo_ms),
+        # requests answered within the SLO per second of makespan
+        "goodput_rps": (sum(bool(r.get("ok")) and r["client_latency_ms"] <= slo_ms for r in results)
+                        / wall if wall else float("nan")),
         "accuracy": float(np.mean(corr)) if corr else None,
         "escalation_rate": float(np.mean(esc)) if esc else None,
         "top_errors": Counter(r.get("error") for r in results if not r.get("ok")).most_common(3),

@@ -349,6 +349,28 @@ def build_report(results: Path) -> Path:
             md += ["Confidence quality per config on the held-out half (AUROC: does confidence "
                    "separate right from wrong answers? ECE: is it calibrated?):", ""]
             md += [md_table(rep["confidence"], ["config", "accuracy", "auroc", "ece", "cost"]), ""]
+            if rep.get("calibration"):
+                md += ["Temperature scaling (T fit per config on the calibration half; ECE on the "
+                       "held-out half):", ""]
+                md += [md_table(rep["calibration"], ["config", "temperature", "ece_before",
+                                                     "ece_after"]), ""]
+            if rep.get("router"):
+                ro = rep["router"]
+                md += [f"Router: probes with `{ro['probe']}`, then jumps once (lambda = "
+                       f"{_fmt(ro['lambda'])}, chosen by cross-fitting on the calibration half; "
+                       f"{_fmt(ro['mean_runs'], 2)} runs per question). Final answers came from: "
+                       + ", ".join(f"`{c}` {v:.0%}" for c, v in ro["routes"].items()) + ".", ""]
+            sd = run / "replay" / "seeds.json"
+            if sd.exists():
+                rob = json.loads(sd.read_text())
+                md += [f"Split robustness: every policy refit and rescored over "
+                       f"{len(rob['seeds'])} calibration/test splits (mean and standard deviation; "
+                       f"cost as a multiple of `{rob['reference']}`; not_worse_share is the share "
+                       "of splits whose paired 95% interval does not put the policy below the "
+                       "reference):", ""]
+                md += [md_table(rob["policies"], ["policy", "accuracy_mean", "accuracy_sd",
+                                                  "cost_ratio_mean", "cost_ratio_sd",
+                                                  "acc_diff_mean", "not_worse_share"]), ""]
             if rep.get("ablations"):
                 md += ["Ablations (cascade with one rung removed):", ""]
                 md += [md_table(rep["ablations"], ["policy", "accuracy", "mean_cost", "acc_diff",
@@ -385,7 +407,16 @@ def build_report(results: Path) -> Path:
                "hundred requests is noisy.", ""]
         md += [md_table(rows, ["run", "policy", "backend", "rate", "requests", "ok",
                                "throughput_rps", "p50_ms", "p95_ms", "p99_ms", "ttft_p50_ms",
-                               "cold_p50_ms", "accuracy", "escalation_rate"]), ""]
+                               "cold_p50_ms", "slo_attainment", "goodput_rps", "accuracy",
+                               "escalation_rate"]), ""]
+        if any(r.get("slo_attainment") is not None for r in rows):
+            from .serve.loadgen import goodput
+
+            slo = next(r["slo_ms"] for r in rows if r.get("slo_ms"))
+            gp = goodput(rows)
+            md += [f"Goodput (highest tested arrival rate at which at least 90% of requests "
+                   f"finished within {slo / 1e3:.0f} s; 0 means no tested rate met it): "
+                   + ", ".join(f"`{k}` {v:.2f} req/s" for k, v in sorted(gp.items())) + ".", ""]
         failed = [r for r in rows if r.get("ok", 0) < r.get("requests", 0)]
         if failed:
             md += ["Failed requests (most common error per run; full records in "
