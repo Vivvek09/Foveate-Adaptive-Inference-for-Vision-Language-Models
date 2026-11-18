@@ -5,7 +5,21 @@ vision-language models (VLMs), built for and measured on Kaggle's 2x T4 GPUs.**
 
 [![ci](https://github.com/Vivvek09/Foveate-Adaptive-Inference-for-Vision-Language-Models/actions/workflows/ci.yml/badge.svg)](https://github.com/Vivvek09/Foveate-Adaptive-Inference-for-Vision-Language-Models/actions/workflows/ci.yml)
 
-**Contents:** [The idea](#the-idea) · [Results](#results) · [Quick start](#quick-start) ·
+## At a glance
+
+- **Same accuracy, 37% less latency.** Learned per-task rules match Qwen2.5-VL-7B on held-out
+  MVBench (0.672 vs 0.683, inside the 95% CI) at 0.63x its latency.
+- **Median latency halved under load.** Behind the Foveate gateway on two T4s, the confidence
+  cascade cuts p50 from 16.5 s to 8.2 s at 0.5 req/s and sustains ~30% more throughput than
+  the best static setting.
+- **Where the time goes.** CUDA-event profiling shows visual tokens drive prefill: 16 frames
+  at 672 px (4,464 tokens) cost ~8.2 s of GPU time against 0.6 s at 224 px.
+- **Measured honestly.** Thresholds fit on one half and scored on the other, paired bootstrap
+  CIs, a non-deployable oracle ceiling, and fog/night/blur shift tests with a drift detector.
+
+**Stack:** PyTorch · vLLM · Qwen2.5-VL (3B fp16, 7B-AWQ) · FastAPI · CUDA events · pytest (38 tests in CI)
+
+**Contents:** [At a glance](#at-a-glance) · [The idea](#the-idea) · [Results](#results) · [Quick start](#quick-start) ·
 [Pipeline](#the-pipeline) · [Modes](#three-modes) · [Kaggle T4 notes](#kaggle-t4-x2-notes) ·
 [What is verified](#what-is-verified) · [Repository layout](#repository-layout) ·
 [Troubleshooting](#troubleshooting) · [Limitations](#limitations) · [Licences](#licences)
